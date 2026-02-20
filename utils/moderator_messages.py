@@ -175,8 +175,7 @@ async def delete_moderator_notifications_for_application(
         notifications = await get_moderator_notifications_for_application(
             session, application_id
         )
-        await session.commit()
-        
+
         # Удаляем сообщения в Telegram
         for notification in notifications:
             try:
@@ -200,12 +199,12 @@ async def delete_moderator_notifications_for_application(
                         f"Ошибка при удалении уведомления {notification.message_id} "
                         f"для модератора {notification.moderator_id}: {e}"
                     )
-        
-        # Удаляем записи из БД
-        async for session in get_session():
-            for notification in notifications:
-                await session.delete(notification)
-            await session.commit()
+
+        # Удаляем записи из БД в той же сессии, в которой загрузили
+        for notification in notifications:
+            await session.delete(notification)
+        await session.commit()
+        return
 
 
 async def delete_moderator_screenshot_message_for_application(
