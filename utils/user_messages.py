@@ -218,39 +218,41 @@ async def delete_user_photo_message(
     """
     Удалить сообщение со скриншотом пользователя.
     Возвращает True если успешно удалено.
-    
+
     ВАЖНО: В личном чате бот НЕ МОЖЕТ удалять сообщения пользователя!
     Бот может удалять только свои собственные сообщения.
     Это ограничение Telegram Bot API.
     """
+    logger.info(
+        f"[USER_PHOTO] delete_user_photo_message вызвана: chat_id={chat_id}, message_id={message_id}. "
+        "Вызов bot.delete_message(chat_id, message_id)..."
+    )
     try:
-        logger.info(f"Попытка удалить сообщение {message_id} в чате {chat_id}")
         result = await bot.delete_message(chat_id=chat_id, message_id=message_id)
-        logger.info(f"Сообщение {message_id} успешно удалено. Результат: {result}")
+        logger.info(
+            f"[USER_PHOTO] delete_user_photo_message: сообщение {message_id} удалено успешно. result={result}"
+        )
         return True
     except TelegramBadRequest as e:
         error_msg = str(e).lower()
         error_code = getattr(e, 'error_code', None)
-        logger.error(
-            f"TelegramBadRequest при удалении сообщения {message_id}: "
-            f"Код ошибки: {error_code}, Сообщение: {e}"
+        logger.warning(
+            f"[USER_PHOTO] delete_user_photo_message: TelegramBadRequest. message_id={message_id}, "
+            f"chat_id={chat_id}, error_code={error_code}, message={e!r}"
         )
-        
-        # Сообщение уже удалено или недоступно
         if "message to delete not found" in error_msg or "message not found" in error_msg:
-            logger.debug(f"Сообщение {message_id} уже удалено или не найдено")
+            logger.info(f"[USER_PHOTO] delete_user_photo_message: сообщение уже удалено/не найдено — считаем успехом")
             return True
-        # Бот не может удалять сообщения пользователя в личном чате
-        elif "can't delete" in error_msg or "bad request" in error_msg or error_code == 400:
+        if "can't delete" in error_msg or "bad request" in error_msg or error_code == 400:
             logger.warning(
-                f"Не удалось удалить сообщение {message_id}: {e}\n"
-                f"В личном чате бот не может удалять сообщения пользователя. "
-                f"Это ограничение Telegram Bot API. Бот может удалять только свои сообщения."
+                "[USER_PHOTO] delete_user_photo_message: бот не может удалить сообщение пользователя в личном чате (ограничение Telegram)."
             )
             return False
-        else:
-            logger.warning(f"Не удалось удалить сообщение {message_id}: {e}")
-            return False
+        logger.warning(f"[USER_PHOTO] delete_user_photo_message: удаление не удалось. {e}")
+        return False
     except Exception as e:
-        logger.error(f"Ошибка при удалении сообщения {message_id}: {e}", exc_info=True)
+        logger.error(
+            f"[USER_PHOTO] delete_user_photo_message: исключение при удалении message_id={message_id}: {e}",
+            exc_info=True,
+        )
         return False

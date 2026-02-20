@@ -879,31 +879,37 @@ async def callback_refresh_application(callback: CallbackQuery, state: FSMContex
 @router.message(F.photo)
 async def process_user_screenshot(message: Message, state: FSMContext):
     """Обработка скриншота от пользователя (может быть отправлен в любой момент при активной сессии)"""
+    logger.info(
+        "[USER_PHOTO] Шаг 1/6: Бот получил фото. Обработчик: process_user_screenshot (handlers.user_handlers). "
+        f"user_id={message.from_user.id}, chat_id={message.chat.id}, message_id={message.message_id}"
+    )
     # Проверяем, не является ли это фото от модератора (модератор в состоянии ожидания фото)
     current_state = await state.get_state()
     if current_state and str(current_state) == str(ModeratorStates.waiting_for_moderator_photo):
-        # Это фото от модератора, пропускаем его обработчику модератора
-        logger.debug(f"Пропускаем фото от модератора {message.from_user.id} в состоянии {current_state}")
+        logger.debug(f"[USER_PHOTO] Пропуск: это фото от модератора {message.from_user.id}")
         return
-    
-    photo: PhotoSize = message.photo[-1]  # Берем фото наибольшего размера
+
+    photo: PhotoSize = message.photo[-1]
     file_id = photo.file_id
-    photo_message_id = message.message_id  # Сохраняем ID сообщения со скриншотом для удаления
-    
+    photo_message_id = message.message_id
+    logger.info(f"[USER_PHOTO] Шаг 2/6: Сохранён message_id сообщения со скриншотом для удаления: {photo_message_id}")
+
     async for session in get_session():
         session_obj = await get_active_moderation_session_by_user(
             session,
             message.from_user.id
         )
-        
+
         if not session_obj:
-            # Если нет активной сессии, просто игнорируем фото
+            logger.info("[USER_PHOTO] Нет активной сессии модерации у пользователя — фото не обрабатываем")
             return
-        
-        # Сохраняем file_id скриншота
+
+        logger.info(
+            f"[USER_PHOTO] Шаг 3/6: Найдена активная сессия. application_id={session_obj.application_id}, "
+            f"moderator_id={session_obj.moderator_id}. Сохраняем file_id, отправляем скриншот модератору."
+        )
         await set_session_user_photo(session, session_obj, file_id)
-        
-        # Отправляем скриншот модератору и сохраняем message_id для последующего удаления
+
         bot = message.bot
         from database.queries import set_moderator_screenshot_message_id
 
@@ -916,31 +922,35 @@ async def process_user_screenshot(message: Message, state: FSMContext):
             await set_moderator_screenshot_message_id(
                 session, session_obj.id, sent_message.message_id
             )
+            logger.info(
+                f"[USER_PHOTO] Шаг 4/6: Скриншот отправлен модератору. Сохранён moderator_screenshot_message_id={sent_message.message_id}"
+            )
         except Exception as e:
-            logger.error(f"Не удалось отправить скриншот модератору: {e}")
+            logger.error(f"[USER_PHOTO] Ошибка отправки скриншота модератору: {e}")
             await session.rollback()
             return
 
         await session.commit()
-        
-        # Пытаемся удалить сообщение со скриншотом
-        # ВАЖНО: В личном чате бот НЕ МОЖЕТ удалять сообщения пользователя!
-        # Это ограничение Telegram Bot API. Бот может удалять только свои сообщения.
+
         from utils.user_messages import delete_user_photo_message
-        
-        # Пытаемся удалить сообщение пользователя (может не сработать в личном чате)
-        logger.info(f"Попытка удалить сообщение {photo_message_id} от пользователя {message.from_user.id} в чате {message.chat.id}")
+
+        logger.info(
+            f"[USER_PHOTO] Шаг 5/6: Вызов delete_user_photo_message(bot, chat_id={message.chat.id}, message_id={photo_message_id}). "
+            "Функция: utils.user_messages.delete_user_photo_message"
+        )
         deleted = await delete_user_photo_message(
             bot=bot,
             chat_id=message.chat.id,
             message_id=photo_message_id
         )
-        
+
+        logger.info(
+            f"[USER_PHOTO] Шаг 6/6: Результат удаления сообщения в чате пользователя: deleted={deleted}. "
+            f"message_id={photo_message_id}, chat_id={message.chat.id}"
+        )
         if not deleted:
             logger.warning(
-                f"Не удалось удалить сообщение пользователя {photo_message_id}. "
-                f"Это нормально для личных чатов - бот не может удалять сообщения пользователя. "
-                f"Сообщение останется в чате, но информационное сообщение будет обновлено."
+                "[USER_PHOTO] Сообщение пользователя не удалено (в личном чате бот не может удалять сообщения пользователя — ограничение Telegram)."
             )
         
         # Обновляем информационное сообщение

@@ -854,7 +854,20 @@ async def process_moderator_photo(message: Message, state: FSMContext):
         
         # Коммитим изменения только после успешной отправки
         await db_session.commit()
-        
+
+        # Удаление сообщения с фото в чате модератора по аналогии с удалением фото пользователя
+        from utils.moderator_messages import delete_moderator_own_photo_message_for_application
+        logger.info(
+            "[MOD_PHOTO] Попытка удалить сообщение с фото в чате модератора: "
+            f"moderator_id={message.from_user.id}, message_id={message.message_id}, application_id={application_id}"
+        )
+        await delete_moderator_own_photo_message_for_application(
+            bot=bot,
+            application_id=application_id,
+            moderator_id=message.from_user.id,
+            message_id=message.message_id,
+        )
+
         # Обновляем информационное сообщение пользователя
         try:
             application = await get_application_by_id(db_session, application_id)
