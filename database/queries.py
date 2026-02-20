@@ -16,6 +16,7 @@ from .models import (
     ModerationSession,
     Transaction,
     ModeratorStats,
+    ModeratorNotification,
 )
 
 
@@ -356,6 +357,26 @@ async def set_user_info_message_id(
         await session.flush()
 
 
+async def set_user_invoice_message_id(
+    session: AsyncSession,
+    user_id: int,
+    message_id: int,
+) -> None:
+    """Сохранить ID сообщения с инвойсом пользователя."""
+    user = await get_or_create_user(session, user_id=user_id)
+    user.invoice_message_id = message_id
+    await session.flush()
+
+
+async def get_user_invoice_message_id(
+    session: AsyncSession,
+    user_id: int,
+) -> int | None:
+    """Получить ID сообщения с инвойсом пользователя."""
+    user = await get_or_create_user(session, user_id=user_id)
+    return user.invoice_message_id
+
+
 async def get_user_message_ids(
     session: AsyncSession,
     user_id: int,
@@ -384,4 +405,50 @@ async def get_all_moderators(session: AsyncSession) -> Sequence[User]:
         )
     )
     return result.scalars().all()
+
+
+async def save_moderator_notification(
+    session: AsyncSession,
+    moderator_id: int,
+    application_id: int,
+    message_id: int,
+) -> ModeratorNotification:
+    """Сохранить уведомление модератора о новой заявке."""
+    notification = ModeratorNotification(
+        moderator_id=moderator_id,
+        application_id=application_id,
+        message_id=message_id,
+    )
+    session.add(notification)
+    await session.flush()
+    return notification
+
+
+async def get_moderator_notifications_for_application(
+    session: AsyncSession,
+    application_id: int,
+) -> list[ModeratorNotification]:
+    """Получить все уведомления для заявки."""
+    result = await session.execute(
+        select(ModeratorNotification).where(
+            ModeratorNotification.application_id == application_id
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def delete_moderator_notification(
+    session: AsyncSession,
+    notification_id: int,
+) -> None:
+    """Удалить уведомление из БД."""
+    result = await session.execute(
+        select(ModeratorNotification).where(
+            ModeratorNotification.id == notification_id
+        )
+    )
+    notification = result.scalar_one_or_none()
+    if notification:
+        await session.delete(notification)
+        await session.flush()
 

@@ -57,6 +57,23 @@ def get_back_to_menu_keyboard() -> InlineKeyboardMarkup:
     return keyboard
 
 
+def get_invoice_expired_keyboard(amount: int) -> InlineKeyboardMarkup:
+    """Клавиатура при истечении инвойса с опциями повтора оплаты и возврата в меню"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🔄 Повторить оплату",
+                callback_data=f"retry_payment_{amount}"
+            ),
+            InlineKeyboardButton(
+                text="◀️ Главное меню",
+                callback_data="main_menu"
+            )
+        ]
+    ])
+    return keyboard
+
+
 def get_application_status_keyboard(application_id: int) -> InlineKeyboardMarkup:
     """Клавиатура для просмотра статуса заявки"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[

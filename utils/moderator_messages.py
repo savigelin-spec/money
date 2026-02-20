@@ -7,7 +7,11 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 
 from database.db import get_session
-from database.queries import get_or_create_user, set_user_main_message_id
+from database.queries import (
+    get_or_create_user,
+    set_user_main_message_id,
+    get_moderator_notifications_for_application,
+)
 from utils.telegram_helpers import safe_edit_message_text
 
 logger = logging.getLogger(__name__)
@@ -156,3 +160,48 @@ async def update_moderator_message(
                 return True
             logger.error("Ошибка при редактировании главного сообщения модератора user_id=%s: %s", user_id, e)
             return False
+
+
+async def delete_moderator_notifications_for_application(
+    bot: Bot,
+    application_id: int,
+) -> None:
+    """
+    Удалить все уведомления модераторов о заявке.
+    Вызывается после обработки заявки (approve/reject).
+    """
+    async for session in get_session():
+        notifications = await get_moderator_notifications_for_application(
+            session, application_id
+        )
+        await session.commit()
+        
+        # Удаляем сообщения в Telegram
+        for notification in notifications:
+            try:
+                await bot.delete_message(
+                    chat_id=notification.moderator_id,
+                    message_id=notification.message_id
+                )
+                logger.info(
+                    f"Удалено уведомление о заявке #{application_id} "
+                    f"для модератора {notification.moderator_id}"
+                )
+            except TelegramBadRequest as e:
+                error_msg = str(e).lower()
+                if "message to delete not found" in error_msg or "message not found" in error_msg:
+                    logger.debug(
+                        f"Уведомление {notification.message_id} уже удалено "
+                        f"для модератора {notification.moderator_id}"
+                    )
+                else:
+                    logger.error(
+                        f"Ошибка при удалении уведомления {notification.message_id} "
+                        f"для модератора {notification.moderator_id}: {e}"
+                    )
+        
+        # Удаляем записи из БД
+        async for session in get_session():
+            for notification in notifications:
+                await session.delete(notification)
+            await session.commit()

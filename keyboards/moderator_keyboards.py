@@ -30,6 +30,12 @@ def get_moderator_panel_keyboard() -> InlineKeyboardMarkup:
                 text="📊 Статистика",
                 callback_data="moderator_stats"
             )
+        ],
+        [
+            InlineKeyboardButton(
+                text="◀️ Главное меню",
+                callback_data="main_menu"
+            )
         ]
     ])
     return keyboard

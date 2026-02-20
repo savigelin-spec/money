@@ -13,6 +13,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     UniqueConstraint,
+    Index,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -35,6 +36,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(32), default="user")
 
     main_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    invoice_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow
@@ -180,5 +182,30 @@ class ModeratorStats(Base):
 
     __table_args__ = (
         UniqueConstraint("moderator_id", name="uq_moderator_stats_moderator_id"),
+    )
+
+
+class ModeratorNotification(Base):
+    """Уведомление модератора о новой заявке."""
+
+    __tablename__ = "moderator_notifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    moderator_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id"), nullable=False
+    )
+    application_id: Mapped[int] = mapped_column(
+        ForeignKey("applications.id"), nullable=False
+    )
+    message_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow
+    )
+
+    # Индексы для быстрого поиска
+    __table_args__ = (
+        Index('ix_moderator_notifications_application_id', 'application_id'),
+        Index('ix_moderator_notifications_moderator_id', 'moderator_id'),
     )
 

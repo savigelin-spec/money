@@ -1,12 +1,14 @@
 """
 Обработчики для пользователей
 """
+import asyncio
 import logging
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, PhotoSize
 from aiogram.filters import Command, or_f
 from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramBadRequest
 
 from config import APPLICATION_COST, ROLE_MODERATOR, ROLE_ADMIN
 from utils.security import is_moderator_or_admin
@@ -123,6 +125,8 @@ async def cmd_start(message: Message, state: FSMContext):
 
 async def notify_moderators_new_application(bot, application):
     """Отправить уведомление всем модераторам о новой заявке"""
+    from database.queries import save_moderator_notification
+    
     async for session in get_session():
         moderators = await get_all_moderators(session)
         await session.commit()
@@ -142,12 +146,26 @@ async def notify_moderators_new_application(bot, application):
         
         for moderator in moderators:
             try:
-                await bot.send_message(
+                sent_message = await bot.send_message(
                     chat_id=moderator.user_id,
                     text=notification_text,
                     reply_markup=get_moderator_panel_keyboard()
                 )
-                logger.info(f"Уведомление о заявке #{application.id} отправлено модератору {moderator.user_id}")
+                
+                # Сохраняем message_id уведомления в БД
+                async for session in get_session():
+                    await save_moderator_notification(
+                        session,
+                        moderator_id=moderator.user_id,
+                        application_id=application.id,
+                        message_id=sent_message.message_id
+                    )
+                    await session.commit()
+                
+                logger.info(
+                    f"Уведомление о заявке #{application.id} отправлено модератору "
+                    f"{moderator.user_id}, message_id={sent_message.message_id}"
+                )
             except Exception as e:
                 logger.error(f"Не удалось отправить уведомление модератору {moderator.user_id}: {e}")
 
@@ -186,6 +204,20 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
     async for session in get_session():
         user = await get_or_create_user(session, user_id=callback.from_user.id)
         is_moderator_user = is_moderator_or_admin(user)
+        
+        # Удаляем инвойс, если он есть
+        if user.invoice_message_id:
+            try:
+                await callback.bot.delete_message(
+                    chat_id=callback.from_user.id,
+                    message_id=user.invoice_message_id
+                )
+                logger.info(f"Удалён инвойс (message_id={user.invoice_message_id}) при возврате в главное меню")
+                user.invoice_message_id = None
+            except Exception as e:
+                logger.debug(f"Не удалось удалить инвойс (message_id={user.invoice_message_id}): {e}")
+                user.invoice_message_id = None
+        
         await session.commit()
     
     await update_user_main_message(
@@ -353,6 +385,23 @@ async def callback_deposit_amount(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Ошибка: неверная сумма", show_alert=True)
 
 
+@router.callback_query(F.data.startswith("retry_payment_"))
+async def callback_retry_payment(callback: CallbackQuery, state: FSMContext):
+    """Повторить оплату после истечения инвойса"""
+    await state.clear()
+    
+    # Извлекаем сумму из callback_data: "retry_payment_{amount}"
+    try:
+        amount = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Ошибка: неверная сумма", show_alert=True)
+        return
+    
+    # Создаем новый инвойс на ту же сумму
+    await create_stars_invoice(callback, amount)
+    await callback.answer()
+
+
 @router.callback_query(F.data == "deposit_custom_amount")
 async def callback_deposit_custom_amount(callback: CallbackQuery, state: FSMContext):
     """Запрос пользовательской суммы пополнения"""
@@ -434,6 +483,67 @@ async def process_payment_amount_invalid(message: Message, state: FSMContext):
     )
 
 
+async def schedule_invoice_deletion(bot: Bot, user_id: int, invoice_message_id: int, amount: int):
+    """Запланировать удаление инвойса через 10 минут, если он не был оплачен"""
+    await asyncio.sleep(600)  # 10 минут = 600 секунд
+    
+    # Проверяем, был ли инвойс оплачен (invoice_message_id должен быть None, если оплачен)
+    async for session in get_session():
+        user = await get_or_create_user(session, user_id=user_id)
+        await session.commit()
+        
+        # Если invoice_message_id всё ещё установлен, значит инвойс не был оплачен
+        if user.invoice_message_id == invoice_message_id:
+            try:
+                # Удаляем инвойс
+                await bot.delete_message(
+                    chat_id=user_id,
+                    message_id=invoice_message_id
+                )
+                
+                # Очищаем invoice_message_id
+                async for session in get_session():
+                    user = await get_or_create_user(session, user_id=user_id)
+                    user.invoice_message_id = None
+                    await session.commit()
+                
+                # Уведомляем пользователя
+                notification_text = (
+                    "⏰ Счёт на пополнение баланса был автоматически удалён\n\n"
+                    f"💰 Сумма: {amount}⭐\n"
+                    "💡 Вы можете создать новый счёт в любое время"
+                )
+                
+                from keyboards.user_keyboards import get_invoice_expired_keyboard
+                
+                await update_user_main_message(
+                    bot=bot,
+                    user_id=user_id,
+                    text=notification_text,
+                    reply_markup=get_invoice_expired_keyboard(amount)
+                )
+                
+                logger.info(
+                    f"Инвойс (message_id={invoice_message_id}) автоматически удалён "
+                    f"через 10 минут для пользователя {user_id}"
+                )
+            except TelegramBadRequest as e:
+                error_msg = str(e).lower()
+                if "message to delete not found" in error_msg or "message not found" in error_msg:
+                    # Инвойс уже удалён (возможно, оплачен или удалён вручную)
+                    logger.debug(f"Инвойс {invoice_message_id} уже удалён для пользователя {user_id}")
+                    # Очищаем invoice_message_id
+                    async for session in get_session():
+                        user = await get_or_create_user(session, user_id=user_id)
+                        if user.invoice_message_id == invoice_message_id:
+                            user.invoice_message_id = None
+                            await session.commit()
+                else:
+                    logger.error(f"Ошибка при удалении инвойса {invoice_message_id} для пользователя {user_id}: {e}")
+            except Exception as e:
+                logger.error(f"Ошибка при автоматическом удалении инвойса {invoice_message_id}: {e}")
+
+
 async def create_stars_invoice(callback_or_message, amount: int):
     """Создать инвойс для оплаты через Telegram Stars"""
     from aiogram.types import LabeledPrice
@@ -443,7 +553,12 @@ async def create_stars_invoice(callback_or_message, amount: int):
     payload = f"deposit_{user_id}_{amount}_{timestamp}"
     
     title = f"Пополнение баланса на {amount}⭐"
-    description = f"Пополнение баланса в боте на {amount} Telegram Stars"
+    # Улучшенное описание с предупреждением о времени действия
+    description = (
+        f"💰 Пополнение баланса в боте на {amount} Telegram Stars\n\n"
+        f"⏰ Счёт действителен 10 минут\n"
+        f"⚠️ После истечения времени счёт будет автоматически удалён"
+    )
     
     # Для Telegram Stars используем currency='XTR'
     # Сумма указывается напрямую в Stars (не в центах!)
@@ -451,8 +566,11 @@ async def create_stars_invoice(callback_or_message, amount: int):
     prices = [LabeledPrice(label=f"{amount} Stars", amount=amount)]
     
     try:
+        sent_message = None
+        bot = callback_or_message.bot if isinstance(callback_or_message, CallbackQuery) else callback_or_message.bot
+        
         if isinstance(callback_or_message, CallbackQuery):
-            await callback_or_message.message.answer_invoice(
+            sent_message = await callback_or_message.message.answer_invoice(
                 title=title,
                 description=description,
                 payload=payload,
@@ -462,7 +580,7 @@ async def create_stars_invoice(callback_or_message, amount: int):
             )
             await callback_or_message.answer()
         else:
-            await callback_or_message.answer_invoice(
+            sent_message = await callback_or_message.answer_invoice(
                 title=title,
                 description=description,
                 payload=payload,
@@ -471,7 +589,19 @@ async def create_stars_invoice(callback_or_message, amount: int):
                 # provider_token не указываем для Stars!
             )
         
-        logger.info(f"Создан инвойс для пользователя {user_id}: {amount}⭐")
+        # Сохраняем message_id инвойса для возможности удаления
+        if sent_message:
+            from database.queries import set_user_invoice_message_id
+            async for session in get_session():
+                await set_user_invoice_message_id(session, user_id, sent_message.message_id)
+                await session.commit()
+            
+            # Запускаем задачу для автоматического удаления через 10 минут
+            asyncio.create_task(
+                schedule_invoice_deletion(bot, user_id, sent_message.message_id, amount)
+            )
+        
+        logger.info(f"Создан инвойс для пользователя {user_id}: {amount}⭐, message_id={sent_message.message_id if sent_message else 'N/A'}")
         
     except Exception as e:
         logger.error(f"Ошибка при создании инвойса: {e}", exc_info=True)

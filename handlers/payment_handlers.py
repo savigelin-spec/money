@@ -80,22 +80,46 @@ async def process_successful_payment(message: Message):
                 reply_markup=get_back_to_menu_keyboard()
             )
             
-            # Пытаемся удалить сообщение с инвойсом (после оплаты оно стало сообщением о платеже)
-            # Это опционально - если не удастся удалить (системное сообщение), просто игнорируем ошибку
-            try:
-                await message.bot.delete_message(
-                    chat_id=message.chat.id,
-                    message_id=message.message_id
-                )
-                logger.info(
-                    f"Сообщение с инвойсом (message_id={message.message_id}) удалено после успешной оплаты"
-                )
-            except Exception as e:
-                # Игнорируем ошибку - возможно, это системное сообщение, которое нельзя удалить
-                logger.debug(
-                    f"Не удалось удалить сообщение с инвойсом (message_id={message.message_id}): {e}. "
-                    f"Это нормально, если сообщение стало системным после оплаты."
-                )
+            # Очищаем invoice_message_id из БД (это отменит автоматическое удаление через 10 минут)
+            # и пытаемся удалить сообщение с инвойсом
+            from database.queries import get_or_create_user
+            async for session in get_session():
+                user = await get_or_create_user(session, user_id=message.from_user.id)
+                invoice_message_id = user.invoice_message_id
+                user.invoice_message_id = None  # Очищаем, чтобы задача автоматического удаления не сработала
+                await session.commit()
+                
+                # Пытаемся удалить сообщение с инвойсом (после оплаты оно стало сообщением о платеже)
+                # Это опционально - если не удастся удалить (системное сообщение), просто игнорируем ошибку
+                if invoice_message_id:
+                    try:
+                        await message.bot.delete_message(
+                            chat_id=message.chat.id,
+                            message_id=invoice_message_id
+                        )
+                        logger.info(
+                            f"Сообщение с инвойсом (message_id={invoice_message_id}) удалено после успешной оплаты"
+                        )
+                    except Exception as e:
+                        # Игнорируем ошибку - возможно, это системное сообщение, которое нельзя удалить
+                        logger.debug(
+                            f"Не удалось удалить сообщение с инвойсом (message_id={invoice_message_id}): {e}. "
+                            f"Это нормально, если сообщение стало системным после оплаты."
+                        )
+                
+                # Также пытаемся удалить текущее сообщение (на случай, если оно отличается)
+                try:
+                    await message.bot.delete_message(
+                        chat_id=message.chat.id,
+                        message_id=message.message_id
+                    )
+                    logger.info(
+                        f"Сообщение о платеже (message_id={message.message_id}) удалено после успешной оплаты"
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"Не удалось удалить сообщение о платеже (message_id={message.message_id}): {e}"
+                    )
             
             logger.info(
                 f"Баланс пользователя {message.from_user.id} пополнен на {amount}⭐. "

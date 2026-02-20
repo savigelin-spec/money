@@ -477,6 +477,16 @@ async def callback_moderator_approve(callback: CallbackQuery, state: FSMContext)
         
         await db_session.commit()
         
+        # Удаляем уведомления о заявке у всех модераторов
+        from utils.moderator_messages import delete_moderator_notifications_for_application
+        try:
+            await delete_moderator_notifications_for_application(
+                bot=callback.bot,
+                application_id=application_id
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при удалении уведомлений о заявке #{application_id}: {e}")
+        
         # Отправляем фото модератора пользователю, если оно есть, но не было отправлено
         bot = callback.bot
         photo_sent = False
@@ -610,6 +620,16 @@ async def callback_moderator_reject(callback: CallbackQuery, state: FSMContext):
             logger.error(f"Ошибка при обновлении статистики: {e}", exc_info=True)
         
         await db_session.commit()
+        
+        # Удаляем уведомления о заявке у всех модераторов
+        from utils.moderator_messages import delete_moderator_notifications_for_application
+        try:
+            await delete_moderator_notifications_for_application(
+                bot=callback.bot,
+                application_id=application_id
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при удалении уведомлений о заявке #{application_id}: {e}")
         
         # Уведомляем пользователя через информационное сообщение
         bot = callback.bot

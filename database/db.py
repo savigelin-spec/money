@@ -51,6 +51,15 @@ def _ensure_main_message_id_column(conn) -> None:
         conn.execute(text("ALTER TABLE users ADD COLUMN main_message_id INTEGER"))
 
 
+def _ensure_invoice_message_id_column(conn) -> None:
+    """Добавить колонку invoice_message_id в users, если её нет (миграция для старых БД)."""
+    from sqlalchemy import text
+    rows = conn.execute(text("PRAGMA table_info(users)")).fetchall()
+    # rows: (cid, name, type, notnull, default, pk)
+    if not any(r[1] == "invoice_message_id" for r in rows):
+        conn.execute(text("ALTER TABLE users ADD COLUMN invoice_message_id INTEGER"))
+
+
 async def init_db() -> None:
     """
     Создание таблиц в базе данных.
@@ -60,6 +69,7 @@ async def init_db() -> None:
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_ensure_main_message_id_column)
+        await conn.run_sync(_ensure_invoice_message_id_column)
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
