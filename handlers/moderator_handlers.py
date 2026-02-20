@@ -33,7 +33,8 @@ from keyboards.moderator_keyboards import (
 )
 from handlers.states import ModeratorStates
 from utils.queue import update_queue_positions, format_wait_time
-from utils.user_messages import update_user_info_message
+from utils.user_messages import update_user_info_message, update_user_main_message
+from utils.moderator_messages import get_or_create_moderator_message
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -60,8 +61,10 @@ async def cmd_moderator(message: Message, state: FSMContext):
             await message.answer("❌ У вас нет доступа к панели модератора")
             return
         
-        await message.answer(
-            "👮 Панель модератора",
+        await get_or_create_moderator_message(
+            bot=message.bot,
+            user_id=message.from_user.id,
+            text="👮 Панель модератора",
             reply_markup=get_moderator_panel_keyboard()
         )
 
@@ -79,16 +82,19 @@ async def callback_moderator_panel(callback: CallbackQuery, state: FSMContext):
             await callback.answer("❌ Нет доступа", show_alert=True)
             return
         
-        await callback.message.edit_text(
-            "👮 Панель модератора",
+        await update_user_main_message(
+            bot=callback.bot,
+            user_id=callback.from_user.id,
+            text="👮 Панель модератора",
             reply_markup=get_moderator_panel_keyboard()
         )
         await callback.answer()
 
 
 @router.callback_query(F.data == "moderator_pending_applications")
-async def callback_moderator_pending_applications(callback: CallbackQuery):
+async def callback_moderator_pending_applications(callback: CallbackQuery, state: FSMContext):
     """Список ожидающих заявок"""
+    await state.clear()
     async for session in get_session():
         user = await get_or_create_user(session, user_id=callback.from_user.id)
         await session.commit()
@@ -101,13 +107,17 @@ async def callback_moderator_pending_applications(callback: CallbackQuery):
         await session.commit()
         
         if not applications:
-            await callback.message.edit_text(
-                "📋 Нет ожидающих заявок",
+            await update_user_main_message(
+                bot=callback.bot,
+                user_id=callback.from_user.id,
+                text="📋 Нет ожидающих заявок",
                 reply_markup=get_moderator_panel_keyboard()
             )
         else:
-            await callback.message.edit_text(
-                f"📋 Доступные заявки ({len(applications)}):",
+            await update_user_main_message(
+                bot=callback.bot,
+                user_id=callback.from_user.id,
+                text=f"📋 Доступные заявки ({len(applications)}):",
                 reply_markup=get_pending_applications_keyboard(applications)
             )
         await callback.answer()
@@ -116,6 +126,7 @@ async def callback_moderator_pending_applications(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("moderator_take_application_"))
 async def callback_moderator_take_application(callback: CallbackQuery, state: FSMContext):
     """Модератор берет заявку в работу"""
+    await state.clear()
     application_id = int(callback.data.split("_")[-1])
     
     async for session in get_session():
@@ -189,9 +200,10 @@ async def callback_moderator_take_application(callback: CallbackQuery, state: FS
         except Exception as e:
             logger.error(f"Не удалось обновить информационное сообщение пользователю {application.user_id}: {e}")
         
-        await callback.message.edit_text(
-            f"✅ Вы взяли заявку #{application_id} в работу\n\n"
-            "Ожидайте скриншот от пользователя.",
+        await update_user_main_message(
+            bot=callback.bot,
+            user_id=callback.from_user.id,
+            text=f"✅ Вы взяли заявку #{application_id} в работу\n\nОжидайте скриншот от пользователя.",
             reply_markup=get_moderator_panel_keyboard()
         )
         await callback.answer("Заявка взята в работу")
@@ -202,8 +214,9 @@ async def callback_moderator_take_application(callback: CallbackQuery, state: FS
 
 
 @router.callback_query(F.data == "moderator_active_sessions")
-async def callback_moderator_active_sessions(callback: CallbackQuery):
+async def callback_moderator_active_sessions(callback: CallbackQuery, state: FSMContext):
     """Список активных сессий модератора"""
+    await state.clear()
     async for session in get_session():
         user = await get_or_create_user(session, user_id=callback.from_user.id)
         await session.commit()
@@ -219,21 +232,26 @@ async def callback_moderator_active_sessions(callback: CallbackQuery):
         await session.commit()
         
         if not sessions:
-            await callback.message.edit_text(
-                "🔄 У вас нет активных сессий",
+            await update_user_main_message(
+                bot=callback.bot,
+                user_id=callback.from_user.id,
+                text="🔄 У вас нет активных сессий",
                 reply_markup=get_moderator_panel_keyboard()
             )
         else:
-            await callback.message.edit_text(
-                f"🔄 Ваши активные сессии ({len(sessions)}):",
+            await update_user_main_message(
+                bot=callback.bot,
+                user_id=callback.from_user.id,
+                text=f"🔄 Ваши активные сессии ({len(sessions)}):",
                 reply_markup=get_active_sessions_keyboard(sessions)
             )
         await callback.answer()
 
 
 @router.callback_query(F.data == "moderator_sessions_without_photo")
-async def callback_moderator_sessions_without_photo(callback: CallbackQuery):
+async def callback_moderator_sessions_without_photo(callback: CallbackQuery, state: FSMContext):
     """Список завершенных сессий без фото модератора"""
+    await state.clear()
     async for session in get_session():
         user = await get_or_create_user(session, user_id=callback.from_user.id)
         await session.commit()
@@ -250,14 +268,17 @@ async def callback_moderator_sessions_without_photo(callback: CallbackQuery):
         await session.commit()
         
         if not sessions:
-            await callback.message.edit_text(
-                "✅ Все завершенные сессии имеют фото модератора",
+            await update_user_main_message(
+                bot=callback.bot,
+                user_id=callback.from_user.id,
+                text="✅ Все завершенные сессии имеют фото модератора",
                 reply_markup=get_moderator_panel_keyboard()
             )
         else:
-            await callback.message.edit_text(
-                f"⚠️ Завершенные сессии без фото ({len(sessions)}):\n\n"
-                "Вы можете открыть сессию и отправить фото пользователю.",
+            await update_user_main_message(
+                bot=callback.bot,
+                user_id=callback.from_user.id,
+                text=f"⚠️ Завершенные сессии без фото ({len(sessions)}):\n\nВы можете открыть сессию и отправить фото пользователю.",
                 reply_markup=get_active_sessions_keyboard(sessions)
             )
         await callback.answer()
@@ -266,6 +287,7 @@ async def callback_moderator_sessions_without_photo(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("moderator_session_"))
 async def callback_moderator_session(callback: CallbackQuery, state: FSMContext):
     """Просмотр сессии модерации"""
+    await state.clear()
     session_id = int(callback.data.split("_")[-1])
     
     async for db_session in get_session():
@@ -323,8 +345,10 @@ async def callback_moderator_session(callback: CallbackQuery, state: FSMContext)
                 )
             ])
         
-        await callback.message.edit_text(
-            session_text,
+        await update_user_main_message(
+            bot=callback.bot,
+            user_id=callback.from_user.id,
+            text=session_text,
             reply_markup=keyboard
         )
         await callback.answer()
@@ -360,21 +384,20 @@ async def callback_moderator_send_photo(callback: CallbackQuery, state: FSMConte
         await state.set_state(ModeratorStates.waiting_for_moderator_photo)
         logger.info(f"Модератор {callback.from_user.id} переведен в состояние ожидания фото для сессии {session_id}")
         
-        try:
-            await callback.message.edit_text(
-                "📸 Отправьте фото для пользователя (просто отправьте фото в этот чат):",
-                reply_markup=get_moderation_session_keyboard(session_id)
-            )
-        except Exception as e:
-            if "message is not modified" not in str(e):
-                logger.error(f"Ошибка при редактировании сообщения: {e}")
+        await update_user_main_message(
+            bot=callback.bot,
+            user_id=callback.from_user.id,
+            text="📸 Отправьте фото для пользователя (просто отправьте фото в этот чат):",
+            reply_markup=get_moderation_session_keyboard(session_id)
+        )
         
         await callback.answer("Теперь отправьте фото в чат")
 
 
 @router.callback_query(F.data.startswith("moderator_approve_"))
-async def callback_moderator_approve(callback: CallbackQuery):
+async def callback_moderator_approve(callback: CallbackQuery, state: FSMContext):
     """Модератор подтверждает заявку"""
+    await state.clear()
     session_id = int(callback.data.split("_")[-1])
     logger.info(f"Модератор {callback.from_user.id} пытается подтвердить сессию {session_id}")
     
@@ -506,21 +529,20 @@ async def callback_moderator_approve(callback: CallbackQuery):
         except Exception as e:
             logger.error(f"Не удалось обновить информационное сообщение пользователю {user_id}: {e}")
         
-        try:
-            await callback.message.edit_text(
-                f"✅ Заявка #{application_id} подтверждена",
-                reply_markup=get_moderator_panel_keyboard()
-            )
-        except Exception as e:
-            if "message is not modified" not in str(e):
-                logger.error(f"Ошибка при редактировании сообщения: {e}")
+        await update_user_main_message(
+            bot=callback.bot,
+            user_id=callback.from_user.id,
+            text=f"✅ Заявка #{application_id} подтверждена",
+            reply_markup=get_moderator_panel_keyboard()
+        )
         
         await callback.answer("Заявка подтверждена")
 
 
 @router.callback_query(F.data.startswith("moderator_reject_"))
-async def callback_moderator_reject(callback: CallbackQuery):
+async def callback_moderator_reject(callback: CallbackQuery, state: FSMContext):
     """Модератор отклоняет заявку"""
+    await state.clear()
     session_id = int(callback.data.split("_")[-1])
     logger.info(f"Модератор {callback.from_user.id} пытается отклонить сессию {session_id}")
     
@@ -610,14 +632,12 @@ async def callback_moderator_reject(callback: CallbackQuery):
         except Exception as e:
             logger.error(f"Не удалось обновить информационное сообщение пользователю {user_id}: {e}")
         
-        try:
-            await callback.message.edit_text(
-                f"❌ Заявка #{application_id} отклонена",
-                reply_markup=get_moderator_panel_keyboard()
-            )
-        except Exception as e:
-            if "message is not modified" not in str(e):
-                logger.error(f"Ошибка при редактировании сообщения: {e}")
+        await update_user_main_message(
+            bot=callback.bot,
+            user_id=callback.from_user.id,
+            text=f"❌ Заявка #{application_id} отклонена",
+            reply_markup=get_moderator_panel_keyboard()
+        )
         
         await callback.answer("Заявка отклонена")
 
@@ -781,8 +801,23 @@ async def process_moderator_photo(message: Message, state: FSMContext):
 
 
 @router.message(ModeratorStates.waiting_for_moderator_photo)
-async def process_moderator_photo_invalid(message: Message):
+async def process_moderator_photo_invalid(message: Message, state: FSMContext):
     """Обработка некорректного сообщения вместо фото"""
+    # Игнорируем команды - они обрабатываются отдельными обработчиками
+    # Проверяем, является ли сообщение командой через entities или начало текста
+    if message.entities:
+        from aiogram.enums import MessageEntityType
+        for entity in message.entities:
+            if entity.type == MessageEntityType.BOT_COMMAND:
+                # Это команда, очищаем состояние и пропускаем
+                await state.clear()
+                return
+    
+    if message.text and message.text.startswith('/'):
+        # Если это команда, очищаем состояние и пропускаем
+        await state.clear()
+        return
+    
     await message.answer(
         "❌ Пожалуйста, отправьте фото (изображение).\n"
         "Просто отправьте фото в этот чат."
@@ -790,8 +825,9 @@ async def process_moderator_photo_invalid(message: Message):
 
 
 @router.callback_query(F.data == "moderator_stats")
-async def callback_moderator_stats(callback: CallbackQuery):
+async def callback_moderator_stats(callback: CallbackQuery, state: FSMContext):
     """Статистика модератора"""
+    await state.clear()
     async for db_session in get_session():
         user = await get_or_create_user(db_session, user_id=callback.from_user.id)
         await db_session.commit()
@@ -810,8 +846,10 @@ async def callback_moderator_stats(callback: CallbackQuery):
             f"⏳ Общее время: {stats.total_time_seconds} сек"
         )
         
-        await callback.message.edit_text(
-            stats_text,
+        await update_user_main_message(
+            bot=callback.bot,
+            user_id=callback.from_user.id,
+            text=stats_text,
             reply_markup=get_moderator_panel_keyboard()
         )
         await callback.answer()

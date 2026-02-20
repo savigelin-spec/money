@@ -8,6 +8,7 @@ from aiogram.types import Message, PreCheckoutQuery
 from database.db import get_session
 from database.queries import get_or_create_user
 from utils.balance import deposit_stars
+from utils.user_messages import update_user_main_message
 from keyboards.user_keyboards import get_back_to_menu_keyboard
 
 logger = logging.getLogger(__name__)
@@ -72,10 +73,29 @@ async def process_successful_payment(message: Message):
                 f"📊 Ваш баланс: {new_balance}⭐"
             )
             
-            await message.answer(
-                success_text,
+            await update_user_main_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=success_text,
                 reply_markup=get_back_to_menu_keyboard()
             )
+            
+            # Пытаемся удалить сообщение с инвойсом (после оплаты оно стало сообщением о платеже)
+            # Это опционально - если не удастся удалить (системное сообщение), просто игнорируем ошибку
+            try:
+                await message.bot.delete_message(
+                    chat_id=message.chat.id,
+                    message_id=message.message_id
+                )
+                logger.info(
+                    f"Сообщение с инвойсом (message_id={message.message_id}) удалено после успешной оплаты"
+                )
+            except Exception as e:
+                # Игнорируем ошибку - возможно, это системное сообщение, которое нельзя удалить
+                logger.debug(
+                    f"Не удалось удалить сообщение с инвойсом (message_id={message.message_id}): {e}. "
+                    f"Это нормально, если сообщение стало системным после оплаты."
+                )
             
             logger.info(
                 f"Баланс пользователя {message.from_user.id} пополнен на {amount}⭐. "
@@ -85,8 +105,13 @@ async def process_successful_payment(message: Message):
         except Exception as e:
             await session.rollback()
             logger.error(f"Ошибка при обработке платежа: {e}", exc_info=True)
-            await message.answer(
+            error_text = (
                 "❌ Произошла ошибка при обработке платежа. "
-                "Пожалуйста, свяжитесь с администратором.",
+                "Пожалуйста, свяжитесь с администратором."
+            )
+            await update_user_main_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=error_text,
                 reply_markup=get_back_to_menu_keyboard()
             )

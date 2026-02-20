@@ -4,7 +4,8 @@
 import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, PhotoSize
-from aiogram.filters import Command
+from aiogram.filters import Command, or_f
+from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 
 from config import APPLICATION_COST, ROLE_MODERATOR, ROLE_ADMIN
@@ -40,39 +41,13 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 router = Router()
 
-
-async def notify_moderators_new_application(bot, application):
-    """Отправить уведомление всем модераторам о новой заявке"""
-    async for session in get_session():
-        moderators = await get_all_moderators(session)
-        await session.commit()
-        
-        if not moderators:
-            logger.info("Нет модераторов для уведомления")
-            return
-        
-        notification_text = (
-            f"🔔 Новая заявка #{application.id}\n\n"
-            f"👤 Пользователь: {application.user_id}\n"
-            f"📊 Позиция в очереди: {application.queue_position or 'рассчитывается...'}\n"
-            f"📅 Создана: {application.created_at.strftime('%d.%m.%Y %H:%M')}"
-        )
-        
-        from keyboards.moderator_keyboards import get_moderator_panel_keyboard
-        
-        for moderator in moderators:
-            try:
-                await bot.send_message(
-                    chat_id=moderator.user_id,
-                    text=notification_text,
-                    reply_markup=get_moderator_panel_keyboard()
-                )
-                logger.info(f"Уведомление о заявке #{application.id} отправлено модератору {moderator.user_id}")
-            except Exception as e:
-                logger.error(f"Не удалось отправить уведомление модератору {moderator.user_id}: {e}")
+# Отдельный роутер для команды /start - должен обрабатываться ПЕРВЫМ
+start_router = Router()
 
 
-@router.message(Command("start"))
+# ВАЖНО: Обработчик команды /start должен быть зарегистрирован ПЕРВЫМ,
+# чтобы он обрабатывался независимо от состояния FSM
+@start_router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     """Обработчик команды /start"""
     await state.clear()
@@ -146,6 +121,37 @@ async def cmd_start(message: Message, state: FSMContext):
                 )
 
 
+async def notify_moderators_new_application(bot, application):
+    """Отправить уведомление всем модераторам о новой заявке"""
+    async for session in get_session():
+        moderators = await get_all_moderators(session)
+        await session.commit()
+        
+        if not moderators:
+            logger.info("Нет модераторов для уведомления")
+            return
+        
+        notification_text = (
+            f"🔔 Новая заявка #{application.id}\n\n"
+            f"👤 Пользователь: {application.user_id}\n"
+            f"📊 Позиция в очереди: {application.queue_position or 'рассчитывается...'}\n"
+            f"📅 Создана: {application.created_at.strftime('%d.%m.%Y %H:%M')}"
+        )
+        
+        from keyboards.moderator_keyboards import get_moderator_panel_keyboard
+        
+        for moderator in moderators:
+            try:
+                await bot.send_message(
+                    chat_id=moderator.user_id,
+                    text=notification_text,
+                    reply_markup=get_moderator_panel_keyboard()
+                )
+                logger.info(f"Уведомление о заявке #{application.id} отправлено модератору {moderator.user_id}")
+            except Exception as e:
+                logger.error(f"Не удалось отправить уведомление модератору {moderator.user_id}: {e}")
+
+
 @router.callback_query(F.data == "go_to_moderator_panel")
 async def callback_go_to_moderator_panel(callback: CallbackQuery, state: FSMContext):
     """Переход в панель модератора из главного меню"""
@@ -159,11 +165,13 @@ async def callback_go_to_moderator_panel(callback: CallbackQuery, state: FSMCont
             await callback.answer("❌ У вас нет доступа к панели модератора", show_alert=True)
             return
     
-    # Отправляем панель модератора
+    # Обновляем главное сообщение панелью модератора
     from keyboards.moderator_keyboards import get_moderator_panel_keyboard
     
-    await callback.message.answer(
-        "👮 Панель модератора",
+    await update_user_main_message(
+        bot=callback.bot,
+        user_id=callback.from_user.id,
+        text="👮 Панель модератора",
         reply_markup=get_moderator_panel_keyboard()
     )
     await callback.answer()
@@ -271,8 +279,9 @@ async def callback_create_application(callback: CallbackQuery, state: FSMContext
 
 
 @router.callback_query(F.data == "show_balance")
-async def callback_show_balance(callback: CallbackQuery):
+async def callback_show_balance(callback: CallbackQuery, state: FSMContext):
     """Показать баланс пользователя"""
+    await state.clear()
     async for session in get_session():
         user = await get_or_create_user(
             session,
@@ -334,8 +343,9 @@ async def callback_deposit_balance(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("deposit_amount_"))
-async def callback_deposit_amount(callback: CallbackQuery):
+async def callback_deposit_amount(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора суммы пополнения"""
+    await state.clear()
     try:
         amount = int(callback.data.split("_")[-1])
         await create_stars_invoice(callback, amount)
@@ -399,8 +409,23 @@ async def process_payment_amount(message: Message, state: FSMContext):
 
 
 @router.message(UserStates.waiting_for_payment_amount)
-async def process_payment_amount_invalid(message: Message):
+async def process_payment_amount_invalid(message: Message, state: FSMContext):
     """Обработка неверного формата суммы"""
+    # Игнорируем команды - они обрабатываются отдельными обработчиками
+    # Проверяем, является ли сообщение командой через entities или начало текста
+    if message.entities:
+        from aiogram.enums import MessageEntityType
+        for entity in message.entities:
+            if entity.type == MessageEntityType.BOT_COMMAND:
+                # Это команда, очищаем состояние и пропускаем
+                await state.clear()
+                return
+    
+    if message.text and message.text.startswith('/'):
+        # Если это команда, очищаем состояние и пропускаем
+        await state.clear()
+        return
+    
     await update_user_main_message(
         bot=message.bot,
         user_id=message.from_user.id,
@@ -454,11 +479,18 @@ async def create_stars_invoice(callback_or_message, amount: int):
             "❌ Не удалось создать счёт для оплаты.\n"
             "Пожалуйста, попробуйте позже или свяжитесь с администратором."
         )
+        user_id = callback_or_message.from_user.id
+        bot = callback_or_message.bot if isinstance(callback_or_message, CallbackQuery) else callback_or_message.bot
+        
+        await update_user_main_message(
+            bot=bot,
+            user_id=user_id,
+            text=error_text,
+            reply_markup=get_back_to_menu_keyboard()
+        )
+        
         if isinstance(callback_or_message, CallbackQuery):
-            await callback_or_message.message.answer(error_text, reply_markup=get_back_to_menu_keyboard())
             await callback_or_message.answer("Ошибка", show_alert=True)
-        else:
-            await callback_or_message.answer(error_text, reply_markup=get_back_to_menu_keyboard())
 
 
 async def create_stars_invoice_message(message: Message, amount: int):
@@ -467,8 +499,9 @@ async def create_stars_invoice_message(message: Message, amount: int):
 
 
 @router.callback_query(F.data == "my_applications")
-async def callback_my_applications(callback: CallbackQuery):
+async def callback_my_applications(callback: CallbackQuery, state: FSMContext):
     """Показать список заявок пользователя"""
+    await state.clear()
     async for session in get_session():
         applications = await get_user_applications(session, callback.from_user.id)
         await session.commit()
@@ -491,8 +524,9 @@ async def callback_my_applications(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("view_application_"))
-async def callback_view_application(callback: CallbackQuery):
+async def callback_view_application(callback: CallbackQuery, state: FSMContext):
     """Просмотр конкретной заявки"""
+    await state.clear()
     application_id = int(callback.data.split("_")[-1])
     
     async for session in get_session():
@@ -539,8 +573,9 @@ async def callback_view_application(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("refresh_application_"))
-async def callback_refresh_application(callback: CallbackQuery):
+async def callback_refresh_application(callback: CallbackQuery, state: FSMContext):
     """Обновить статус заявки"""
+    await state.clear()
     application_id = int(callback.data.split("_")[-1])
     
     async for session in get_session():
@@ -660,8 +695,23 @@ async def process_user_screenshot(message: Message, state: FSMContext):
 
 
 @router.message(UserStates.waiting_for_screenshot)
-async def process_user_screenshot_invalid(message: Message):
+async def process_user_screenshot_invalid(message: Message, state: FSMContext):
     """Обработка некорректного сообщения вместо скриншота"""
+    # Игнорируем команды - они обрабатываются отдельными обработчиками
+    # Проверяем, является ли сообщение командой через entities или начало текста
+    if message.entities:
+        from aiogram.enums import MessageEntityType
+        for entity in message.entities:
+            if entity.type == MessageEntityType.BOT_COMMAND:
+                # Это команда, очищаем состояние и пропускаем
+                await state.clear()
+                return
+    
+    if message.text and message.text.startswith('/'):
+        # Если это команда, очищаем состояние и пропускаем
+        await state.clear()
+        return
+    
     # Обновляем информационное сообщение, если есть активная сессия
     async for session in get_session():
         moderation_session = await get_active_moderation_session_by_user(

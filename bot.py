@@ -44,6 +44,8 @@ async def main():
     dp = Dispatcher()
 
     # Регистрация routers (важен порядок - более специфичные обработчики должны быть первыми)
+    # ВАЖНО: Команда /start должна обрабатываться ПЕРВОЙ, независимо от состояния FSM
+    dp.include_router(user_handlers.start_router)  # Команда /start обрабатывается первой
     dp.include_router(payment_handlers.router)  # Платежи должны обрабатываться первыми
     dp.include_router(moderator_handlers.router)  # Модератор
     dp.include_router(admin_handlers.router)

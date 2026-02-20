@@ -4,6 +4,7 @@
 import logging
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
 
 from database.db import get_session
 from utils.statistics import (
@@ -47,8 +48,9 @@ _PERIOD_MAP = {
 
 
 @router.callback_query(F.data == "admin_statistics")
-async def callback_admin_statistics(callback: CallbackQuery):
+async def callback_admin_statistics(callback: CallbackQuery, state: FSMContext):
     """Главная страница статистики."""
+    await state.clear()
     answered = False
     try:
         if not await check_admin_access(callback):
@@ -77,8 +79,9 @@ async def callback_admin_statistics(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("stats_period_"))
-async def callback_stats_period(callback: CallbackQuery):
+async def callback_stats_period(callback: CallbackQuery, state: FSMContext):
     """Показать сводную статистику за выбранный период."""
+    await state.clear()
     answered = False
     try:
         if not await check_admin_access(callback):
@@ -114,8 +117,9 @@ async def callback_stats_period(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("stats_type_"))
-async def callback_stats_type(callback: CallbackQuery):
+async def callback_stats_type(callback: CallbackQuery, state: FSMContext):
     """Показать выбранный тип статистики (период по умолчанию 30 дней)."""
+    await state.clear()
     answered = False
     try:
         if not await check_admin_access(callback):
@@ -169,8 +173,9 @@ async def callback_stats_type(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "admin_panel_back")
-async def callback_admin_panel_back(callback: CallbackQuery):
+async def callback_admin_panel_back(callback: CallbackQuery, state: FSMContext):
     """Возврат к панели администратора (текст + кнопка Статистика)."""
+    await state.clear()
     answered = False
     try:
         if not await check_admin_access(callback):

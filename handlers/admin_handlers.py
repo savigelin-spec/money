@@ -11,7 +11,9 @@ from config import ROLE_ADMIN, ROLE_MODERATOR, ROLE_USER
 from database.db import get_session
 from database.queries import get_or_create_user, get_user_applications
 from keyboards.user_keyboards import get_back_to_menu_keyboard
+from keyboards.admin_keyboards import get_admin_panel_keyboard
 from utils.security import is_admin_only, validate_user_id, validate_role
+from utils.admin_messages import get_or_create_admin_message, update_admin_message
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -57,7 +59,12 @@ async def cmd_admin(message: Message, state: FSMContext):
         "/remove_moderator &lt;user_id&gt; — снять модератора\n\n"
         "Роли: user, moderator, admin"
     )
-    await message.answer(admin_text)
+    await get_or_create_admin_message(
+        bot=message.bot,
+        user_id=message.from_user.id,
+        text=admin_text,
+        reply_markup=get_admin_panel_keyboard()
+    )
 
 
 @router.message(Command("set_role"))
@@ -69,17 +76,27 @@ async def cmd_set_role(message: Message):
     try:
         parts = message.text.split()
         if len(parts) != 3:
-            await message.answer(
-                "❌ Неверный формат команды.\n"
-                "Использование: /set_role &lt;user_id&gt; &lt;role&gt;\n"
-                "Роли: user, moderator, admin"
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=(
+                    "❌ Неверный формат команды.\n"
+                    "Использование: /set_role &lt;user_id&gt; &lt;role&gt;\n"
+                    "Роли: user, moderator, admin"
+                ),
+                reply_markup=get_admin_panel_keyboard()
             )
             return
         
         # Валидация user_id
         is_valid_id, target_user_id, error_msg = validate_user_id(parts[1])
         if not is_valid_id:
-            await message.answer(f"❌ {error_msg}")
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=f"❌ {error_msg}",
+                reply_markup=get_admin_panel_keyboard()
+            )
             return
         
         new_role = parts[2].lower()
@@ -87,7 +104,12 @@ async def cmd_set_role(message: Message):
         # Валидация роли
         is_valid_role, error_msg = validate_role(new_role)
         if not is_valid_role:
-            await message.answer(f"❌ {error_msg}")
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=f"❌ {error_msg}",
+                reply_markup=get_admin_panel_keyboard()
+            )
             return
         
         async for session in get_session():
@@ -101,18 +123,33 @@ async def cmd_set_role(message: Message):
                 f"from {old_role} to {new_role}"
             )
             
-            await message.answer(
-                f"✅ Роль пользователя {target_user_id} изменена:\n"
-                f"Было: {old_role}\n"
-                f"Стало: {new_role}"
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=(
+                    f"✅ Роль пользователя {target_user_id} изменена:\n"
+                    f"Было: {old_role}\n"
+                    f"Стало: {new_role}"
+                ),
+                reply_markup=get_admin_panel_keyboard()
             )
             return
             
     except ValueError:
-        await message.answer("❌ Неверный формат user_id. Должно быть число.")
+        await update_admin_message(
+            bot=message.bot,
+            user_id=message.from_user.id,
+            text="❌ Неверный формат user_id. Должно быть число.",
+            reply_markup=get_admin_panel_keyboard()
+        )
     except Exception as e:
         logger.error(f"Ошибка при изменении роли: {e}")
-        await message.answer(f"❌ Ошибка: {e}")
+        await update_admin_message(
+            bot=message.bot,
+            user_id=message.from_user.id,
+            text=f"❌ Ошибка: {e}",
+            reply_markup=get_admin_panel_keyboard()
+        )
 
 
 @router.message(Command("set_moderator"))
@@ -124,16 +161,26 @@ async def cmd_set_moderator(message: Message):
     try:
         parts = message.text.split()
         if len(parts) != 2:
-            await message.answer(
-                "❌ Неверный формат команды.\n"
-                "Использование: /set_moderator &lt;user_id&gt;"
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=(
+                    "❌ Неверный формат команды.\n"
+                    "Использование: /set_moderator &lt;user_id&gt;"
+                ),
+                reply_markup=get_admin_panel_keyboard()
             )
             return
         
         # Валидация user_id
         is_valid_id, target_user_id, error_msg = validate_user_id(parts[1])
         if not is_valid_id:
-            await message.answer(f"❌ {error_msg}")
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=f"❌ {error_msg}",
+                reply_markup=get_admin_panel_keyboard()
+            )
             return
         
         async for session in get_session():
@@ -146,16 +193,29 @@ async def cmd_set_moderator(message: Message):
                 f"Admin {message.from_user.id} set moderator role for user {target_user_id}"
             )
             
-            await message.answer(
-                f"✅ Пользователь {target_user_id} назначен модератором"
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=f"✅ Пользователь {target_user_id} назначен модератором",
+                reply_markup=get_admin_panel_keyboard()
             )
             return
             
     except ValueError:
-        await message.answer("❌ Неверный формат user_id. Должно быть число.")
+        await update_admin_message(
+            bot=message.bot,
+            user_id=message.from_user.id,
+            text="❌ Неверный формат user_id. Должно быть число.",
+            reply_markup=get_admin_panel_keyboard()
+        )
     except Exception as e:
         logger.error(f"Ошибка при назначении модератора: {e}")
-        await message.answer(f"❌ Ошибка: {e}")
+        await update_admin_message(
+            bot=message.bot,
+            user_id=message.from_user.id,
+            text=f"❌ Ошибка: {e}",
+            reply_markup=get_admin_panel_keyboard()
+        )
 
 
 @router.message(Command("remove_moderator"))
@@ -167,24 +227,37 @@ async def cmd_remove_moderator(message: Message):
     try:
         parts = message.text.split()
         if len(parts) != 2:
-            await message.answer(
-                "❌ Неверный формат команды.\n"
-                "Использование: /remove_moderator &lt;user_id&gt;"
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=(
+                    "❌ Неверный формат команды.\n"
+                    "Использование: /remove_moderator &lt;user_id&gt;"
+                ),
+                reply_markup=get_admin_panel_keyboard()
             )
             return
         
         # Валидация user_id
         is_valid_id, target_user_id, error_msg = validate_user_id(parts[1])
         if not is_valid_id:
-            await message.answer(f"❌ {error_msg}")
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=f"❌ {error_msg}",
+                reply_markup=get_admin_panel_keyboard()
+            )
             return
         
         async for session in get_session():
             target_user = await get_or_create_user(session, user_id=target_user_id)
             
             if target_user.role != ROLE_MODERATOR:
-                await message.answer(
-                    f"❌ Пользователь {target_user_id} не является модератором"
+                await update_admin_message(
+                    bot=message.bot,
+                    user_id=message.from_user.id,
+                    text=f"❌ Пользователь {target_user_id} не является модератором",
+                    reply_markup=get_admin_panel_keyboard()
                 )
                 await session.rollback()
                 return
@@ -196,16 +269,29 @@ async def cmd_remove_moderator(message: Message):
                 f"Admin {message.from_user.id} removed moderator role from user {target_user_id}"
             )
             
-            await message.answer(
-                f"✅ Роль модератора убрана у пользователя {target_user_id}"
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=f"✅ Роль модератора убрана у пользователя {target_user_id}",
+                reply_markup=get_admin_panel_keyboard()
             )
             return
             
     except ValueError:
-        await message.answer("❌ Неверный формат user_id. Должно быть число.")
+        await update_admin_message(
+            bot=message.bot,
+            user_id=message.from_user.id,
+            text="❌ Неверный формат user_id. Должно быть число.",
+            reply_markup=get_admin_panel_keyboard()
+        )
     except Exception as e:
         logger.error(f"Ошибка при удалении роли модератора: {e}")
-        await message.answer(f"❌ Ошибка: {e}")
+        await update_admin_message(
+            bot=message.bot,
+            user_id=message.from_user.id,
+            text=f"❌ Ошибка: {e}",
+            reply_markup=get_admin_panel_keyboard()
+        )
 
 
 @router.message(Command("user_info"))
@@ -217,16 +303,26 @@ async def cmd_user_info(message: Message):
     try:
         parts = message.text.split()
         if len(parts) != 2:
-            await message.answer(
-                "❌ Неверный формат команды.\n"
-                "Использование: /user_info &lt;user_id&gt;"
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=(
+                    "❌ Неверный формат команды.\n"
+                    "Использование: /user_info &lt;user_id&gt;"
+                ),
+                reply_markup=get_admin_panel_keyboard()
             )
             return
         
         # Валидация user_id
         is_valid_id, target_user_id, error_msg = validate_user_id(parts[1])
         if not is_valid_id:
-            await message.answer(f"❌ {error_msg}")
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=f"❌ {error_msg}",
+                reply_markup=get_admin_panel_keyboard()
+            )
             return
         
         async for session in get_session():
@@ -245,14 +341,29 @@ async def cmd_user_info(message: Message):
                 f"Регистрация: {target_user.created_at.strftime('%d.%m.%Y %H:%M')}"
             )
             
-            await message.answer(info_text)
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=info_text,
+                reply_markup=get_admin_panel_keyboard()
+            )
             return
             
     except ValueError:
-        await message.answer("❌ Неверный формат user_id. Должно быть число.")
+        await update_admin_message(
+            bot=message.bot,
+            user_id=message.from_user.id,
+            text="❌ Неверный формат user_id. Должно быть число.",
+            reply_markup=get_admin_panel_keyboard()
+        )
     except Exception as e:
         logger.error(f"Ошибка при получении информации о пользователе: {e}")
-        await message.answer(f"❌ Ошибка: {e}")
+        await update_admin_message(
+            bot=message.bot,
+            user_id=message.from_user.id,
+            text=f"❌ Ошибка: {e}",
+            reply_markup=get_admin_panel_keyboard()
+        )
 
 
 @router.message(Command("list_users"))
@@ -273,7 +384,12 @@ async def cmd_list_users(message: Message):
             await session.commit()
             
             if not users:
-                await message.answer("📋 Пользователей пока нет")
+                await update_admin_message(
+                    bot=message.bot,
+                    user_id=message.from_user.id,
+                    text="📋 Пользователей пока нет",
+                    reply_markup=get_admin_panel_keyboard()
+                )
                 return
             
             users_text = "📋 Последние 20 пользователей:\n\n"
@@ -289,9 +405,19 @@ async def cmd_list_users(message: Message):
             if len(users_text) > 4000:
                 users_text = users_text[:4000] + "\n\n... (показаны первые 20)"
             
-            await message.answer(users_text)
+            await update_admin_message(
+                bot=message.bot,
+                user_id=message.from_user.id,
+                text=users_text,
+                reply_markup=get_admin_panel_keyboard()
+            )
             return
             
     except Exception as e:
         logger.error(f"Ошибка при получении списка пользователей: {e}")
-        await message.answer(f"❌ Ошибка: {e}")
+        await update_admin_message(
+            bot=message.bot,
+            user_id=message.from_user.id,
+            text=f"❌ Ошибка: {e}",
+            reply_markup=get_admin_panel_keyboard()
+        )
