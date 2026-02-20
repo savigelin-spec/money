@@ -46,8 +46,25 @@ async def get_or_create_user_main_message(
             except TelegramBadRequest as e:
                 err = str(e).lower()
                 if "message is not modified" in err:
-                    # Контент тот же — пользователь не увидит изменений; шлём новое сообщение, чтобы меню было внизу чата
-                    pass
+                    # Контент тот же — шлём новое сообщение внизу чата и удаляем старое, чтобы не дублировать
+                    old_id = user.main_message_id
+                    try:
+                        sent_message = await bot.send_message(
+                            chat_id=user_id,
+                            text=text,
+                            reply_markup=reply_markup,
+                        )
+                        await set_user_main_message_id(session, user_id, sent_message.message_id)
+                        await session.commit()
+                        try:
+                            await bot.delete_message(chat_id=user_id, message_id=old_id)
+                        except TelegramBadRequest:
+                            pass
+                        return sent_message.message_id
+                    except Exception as e:
+                        logger.error(f"Ошибка при создании главного сообщения для пользователя {user_id}: {e}")
+                        await session.rollback()
+                        return old_id
                 elif "message to edit not found" in err or "message can't be edited" in err:
                     logger.warning(f"Главное сообщение {user.main_message_id} недоступно, создаем новое")
                     user.main_message_id = None
