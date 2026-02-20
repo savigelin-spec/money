@@ -60,6 +60,31 @@ def _ensure_invoice_message_id_column(conn) -> None:
         conn.execute(text("ALTER TABLE users ADD COLUMN invoice_message_id INTEGER"))
 
 
+def _ensure_moderator_photo_message_id_column(conn) -> None:
+    """Добавить колонку moderator_photo_message_id в moderation_sessions, если её нет (миграция для старых БД)."""
+    from sqlalchemy import text
+    rows = conn.execute(text("PRAGMA table_info(moderation_sessions)")).fetchall()
+    # rows: (cid, name, type, notnull, default, pk)
+    if not any(r[1] == "moderator_photo_message_id" for r in rows):
+        conn.execute(text("ALTER TABLE moderation_sessions ADD COLUMN moderator_photo_message_id INTEGER"))
+
+
+def _ensure_moderator_screenshot_message_id_column(conn) -> None:
+    """Добавить колонку moderator_screenshot_message_id в moderation_sessions, если её нет (миграция для старых БД)."""
+    from sqlalchemy import text
+    rows = conn.execute(text("PRAGMA table_info(moderation_sessions)")).fetchall()
+    if not any(r[1] == "moderator_screenshot_message_id" for r in rows):
+        conn.execute(text("ALTER TABLE moderation_sessions ADD COLUMN moderator_screenshot_message_id INTEGER"))
+
+
+def _ensure_moderator_own_photo_message_id_column(conn) -> None:
+    """Добавить колонку moderator_own_photo_message_id в moderation_sessions, если её нет (миграция для старых БД)."""
+    from sqlalchemy import text
+    rows = conn.execute(text("PRAGMA table_info(moderation_sessions)")).fetchall()
+    if not any(r[1] == "moderator_own_photo_message_id" for r in rows):
+        conn.execute(text("ALTER TABLE moderation_sessions ADD COLUMN moderator_own_photo_message_id INTEGER"))
+
+
 async def init_db() -> None:
     """
     Создание таблиц в базе данных.
@@ -70,6 +95,9 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_ensure_main_message_id_column)
         await conn.run_sync(_ensure_invoice_message_id_column)
+        await conn.run_sync(_ensure_moderator_photo_message_id_column)
+        await conn.run_sync(_ensure_moderator_screenshot_message_id_column)
+        await conn.run_sync(_ensure_moderator_own_photo_message_id_column)
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

@@ -110,6 +110,37 @@ async def create_application(
     return application
 
 
+async def cancel_application(
+    session: AsyncSession,
+    application: Application,
+    user: User,
+) -> None:
+    """Отменить заявку и вернуть средства пользователю."""
+    if application.status != "pending":
+        raise ValueError("Можно отменить только заявки в статусе pending")
+    
+    if application.user_id != user.user_id:
+        raise ValueError("Пользователь может отменить только свою заявку")
+    
+    # Возвращаем средства
+    await change_balance(
+        session=session,
+        user=user,
+        amount=APPLICATION_COST,
+        description=f"Возврат средств за отмену заявки #{application.id}",
+        is_deposit=True,
+    )
+    
+    # Изменяем статус заявки на cancelled
+    application.status = "cancelled"
+    await session.flush()
+    
+    # Обновляем позиции в очереди после отмены
+    # Импортируем здесь, чтобы избежать циклического импорта
+    from utils.queue import update_queue_positions
+    await update_queue_positions(session)
+
+
 async def get_pending_applications(session: AsyncSession) -> Sequence[Application]:
     """Получить список ожидающих заявок (pending), отсортированных по позиции в очереди и дате."""
     result = await session.execute(
@@ -343,6 +374,65 @@ async def set_user_main_message_id(
     user = await get_or_create_user(session, user_id=user_id)
     user.main_message_id = message_id
     await session.flush()
+
+
+async def set_moderator_photo_message_id(
+    session: AsyncSession,
+    session_id: int,
+    message_id: int,
+) -> None:
+    """Сохранить ID сообщения с фото от модератора."""
+    from database.models import ModerationSession
+    result = await session.execute(
+        select(ModerationSession).where(ModerationSession.id == session_id)
+    )
+    moderation_session = result.scalar_one_or_none()
+    if moderation_session:
+        moderation_session.moderator_photo_message_id = message_id
+        await session.flush()
+
+
+async def set_moderator_screenshot_message_id(
+    session: AsyncSession,
+    session_id: int,
+    message_id: int,
+) -> None:
+    """Сохранить ID сообщения «Скриншот от пользователя» в чате модератора."""
+    result = await session.execute(
+        select(ModerationSession).where(ModerationSession.id == session_id)
+    )
+    moderation_session = result.scalar_one_or_none()
+    if moderation_session:
+        moderation_session.moderator_screenshot_message_id = message_id
+        await session.flush()
+
+
+async def set_moderator_own_photo_message_id(
+    session: AsyncSession,
+    session_id: int,
+    message_id: int,
+) -> None:
+    """Сохранить ID сообщения модератора с фото в его чате."""
+    result = await session.execute(
+        select(ModerationSession).where(ModerationSession.id == session_id)
+    )
+    moderation_session = result.scalar_one_or_none()
+    if moderation_session:
+        moderation_session.moderator_own_photo_message_id = message_id
+        await session.flush()
+
+
+async def get_moderation_session_by_application_id(
+    session: AsyncSession,
+    application_id: int,
+) -> ModerationSession | None:
+    """Получить сессию модерации по ID заявки (одна сессия на заявку)."""
+    result = await session.execute(
+        select(ModerationSession).where(
+            ModerationSession.application_id == application_id
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 async def set_user_info_message_id(

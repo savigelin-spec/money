@@ -21,7 +21,9 @@ from database.queries import (
     get_application_by_id,
     get_active_moderation_session_by_user,
     set_session_user_photo,
+    set_user_main_message_id,
     get_all_moderators,
+    get_moderation_session_by_id,
 )
 from keyboards.user_keyboards import (
     get_main_menu_keyboard,
@@ -79,13 +81,24 @@ async def cmd_start(message: Message, state: FSMContext):
         await session.commit()
     
     # Создаем или обновляем главное сообщение с меню
-    await get_or_create_user_main_message(
+    main_msg_id = await get_or_create_user_main_message(
         bot=message.bot,
         user_id=message.from_user.id,
         text=welcome_text,
         reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user)
     )
-    
+    # Если не удалось создать/обновить главное сообщение (например, первый запрос к БД),
+    # отправляем ответ в чат и сохраняем message_id, чтобы меню работало со второго раза
+    if main_msg_id is None:
+        sent = await message.answer(
+            welcome_text,
+            reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user)
+        )
+        async for session in get_session():
+            await set_user_main_message_id(session, message.from_user.id, sent.message_id)
+            await session.commit()
+            break
+
     # Проверяем, есть ли активная сессия для информационного сообщения
     async for session in get_session():
         moderation_session = await get_active_moderation_session_by_user(
@@ -142,14 +155,11 @@ async def notify_moderators_new_application(bot, application):
             f"📅 Создана: {application.created_at.strftime('%d.%m.%Y %H:%M')}"
         )
         
-        from keyboards.moderator_keyboards import get_moderator_panel_keyboard
-        
         for moderator in moderators:
             try:
                 sent_message = await bot.send_message(
                     chat_id=moderator.user_id,
-                    text=notification_text,
-                    reply_markup=get_moderator_panel_keyboard()
+                    text=notification_text
                 )
                 
                 # Сохраняем message_id уведомления в БД
@@ -231,12 +241,54 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "create_application")
 async def callback_create_application(callback: CallbackQuery, state: FSMContext):
-    """Создание заявки на подтверждение"""
+    """Показать экран подтверждения создания заявки"""
+    await state.clear()
+    
     async for session in get_session():
-        user = await get_or_create_user(
-            session,
-            user_id=callback.from_user.id,
+        user = await get_or_create_user(session, user_id=callback.from_user.id)
+        await session.commit()
+        
+        if not await can_create_application(session, user):
+            if user.balance < APPLICATION_COST:
+                await callback.answer(
+                    f"❌ Недостаточно средств! Ваш баланс: {user.balance}⭐. "
+                    f"Необходимо: {APPLICATION_COST}⭐",
+                    show_alert=True
+                )
+            else:
+                await callback.answer(
+                    "❌ У вас уже есть активная заявка!",
+                    show_alert=True
+                )
+            return
+        
+        # Показываем экран подтверждения
+        confirmation_text = (
+            f"📋 Подтверждение создания заявки\n\n"
+            f"💰 Стоимость: {APPLICATION_COST}⭐\n"
+            f"💵 Ваш баланс: {user.balance}⭐\n"
+            f"💵 Баланс после списания: {user.balance - APPLICATION_COST}⭐\n\n"
+            f"После создания заявки средства будут списаны с вашего баланса."
         )
+        
+        from keyboards.user_keyboards import get_application_confirmation_keyboard
+        
+        await update_user_main_message(
+            bot=callback.bot,
+            user_id=callback.from_user.id,
+            text=confirmation_text,
+            reply_markup=get_application_confirmation_keyboard()
+        )
+        await callback.answer()
+
+
+@router.callback_query(F.data == "confirm_create_application")
+async def callback_confirm_create_application(callback: CallbackQuery, state: FSMContext):
+    """Фактическое создание заявки после подтверждения"""
+    await state.clear()
+    
+    async for session in get_session():
+        user = await get_or_create_user(session, user_id=callback.from_user.id)
         
         if not await can_create_application(session, user):
             if user.balance < APPLICATION_COST:
@@ -270,44 +322,38 @@ async def callback_create_application(callback: CallbackQuery, state: FSMContext
         
         await session.commit()
         
-        # Создаем сессию модерации (если еще не создана)
-        moderation_session = await get_active_moderation_session_by_user(session, callback.from_user.id)
-        if not moderation_session:
-            # Сессия будет создана модератором при взятии заявки
-            pass
-        
-        await session.commit()
-        
+        # Формируем текст статуса заявки
         wait_time_text = ""
         if application.estimated_wait_time:
             wait_time_text = f"\n⏱ Примерное время ожидания: {format_wait_time(application.estimated_wait_time)}"
         
-        info_text = (
+        status_text = (
             f"📊 Статус заявки #{application.id}\n\n"
             f"✅ Заявка создана!\n"
-            f"📊 Позиция в очереди: {application.queue_position or 'рассчитывается...'}{wait_time_text}\n\n"
-            "Ожидайте подключения модератора. Вы получите уведомление, когда модератор начнет работу с вашей заявкой."
+            f"📊 Статус: {application.status}\n"
         )
         
-        # Проверяем, является ли пользователь модератором
-        is_moderator_user = is_moderator_or_admin(user)
+        if application.queue_position:
+            status_text += f"📍 Позиция в очереди: {application.queue_position}{wait_time_text}\n\n"
+        else:
+            status_text += f"📍 Позиция в очереди: рассчитывается...\n\n"
         
-        # Обновляем главное сообщение обратно в меню
+        status_text += "Ожидайте подключения модератора. Вы получите уведомление, когда модератор начнет работу с вашей заявкой."
+        
+        # Показываем статус заявки в главном сообщении
+        from keyboards.user_keyboards import get_application_status_keyboard
+        
         await update_user_main_message(
             bot=callback.bot,
             user_id=callback.from_user.id,
-            text="Главное меню:",
-            reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user)
+            text=status_text,
+            reply_markup=get_application_status_keyboard(application.id, application.status)
         )
         
         # Отправляем уведомления модераторам о новой заявке
         await notify_moderators_new_application(callback.bot, application)
         
-        # Обновляем информационное сообщение (если сессия уже есть) или создаем новое
-        # Но сессии еще нет, так что просто обновим главное сообщение с информацией
-        # Информационное сообщение будет создано, когда модератор возьмет заявку
         await callback.answer("Заявка создана!")
-        return
 
 
 @router.callback_query(F.data == "show_balance")
@@ -671,7 +717,8 @@ async def callback_view_application(callback: CallbackQuery, state: FSMContext):
             "pending": "⏳",
             "moderating": "🔄",
             "completed": "✅",
-            "rejected": "❌"
+            "rejected": "❌",
+            "cancelled": "🚫"
         }.get(application.status, "❓")
         
         wait_time_text = ""
@@ -697,9 +744,106 @@ async def callback_view_application(callback: CallbackQuery, state: FSMContext):
             bot=callback.bot,
             user_id=callback.from_user.id,
             text=app_text,
-            reply_markup=get_application_status_keyboard(application_id)
+            reply_markup=get_application_status_keyboard(application_id, application.status)
         )
         await callback.answer()
+
+
+@router.callback_query(F.data.startswith("cancel_application_"))
+async def callback_cancel_application(callback: CallbackQuery, state: FSMContext):
+    """Отменить заявку"""
+    await state.clear()
+    application_id = int(callback.data.split("_")[-1])
+    
+    try:
+        # Отменяем заявку и возвращаем средства
+        from database.queries import cancel_application
+        async for session in get_session():
+            user = await get_or_create_user(session, user_id=callback.from_user.id)
+            application = await get_application_by_id(session, application_id)
+            
+            if not application or application.user_id != callback.from_user.id:
+                await callback.answer("❌ Заявка не найдена", show_alert=True)
+                await session.rollback()
+                return
+            
+            if application.status != "pending":
+                await callback.answer(
+                    "❌ Можно отменить только заявки в статусе 'ожидание'",
+                    show_alert=True
+                )
+                await session.rollback()
+                return
+            
+            await cancel_application(session, application, user)
+            await session.commit()
+        
+        # Показываем подтверждение отмены
+        cancel_text = (
+            f"✅ Заявка #{application_id} отменена\n\n"
+            f"💰 Средства возвращены на ваш баланс\n"
+            f"💵 Возвращено: {APPLICATION_COST}⭐"
+        )
+        
+        await update_user_main_message(
+            bot=callback.bot,
+            user_id=callback.from_user.id,
+            text=cancel_text,
+            reply_markup=get_back_to_menu_keyboard()
+        )
+        
+        await callback.answer("Заявка отменена")
+        
+    except ValueError as e:
+        await callback.answer(f"❌ {str(e)}", show_alert=True)
+    except Exception as e:
+        logger.error(f"Ошибка при отмене заявки #{application_id}: {e}", exc_info=True)
+        await callback.answer("❌ Произошла ошибка при отмене заявки", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("confirm_moderator_photo_"))
+async def callback_confirm_moderator_photo(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение получения фото от модератора и удаление временных сообщений"""
+    await state.clear()
+    session_id = int(callback.data.split("_")[-1])
+    
+    async for session in get_session():
+        moderation_session = await get_moderation_session_by_id(session, session_id)
+        await session.commit()
+        
+        if not moderation_session or moderation_session.user_id != callback.from_user.id:
+            await callback.answer("❌ Сессия не найдена", show_alert=True)
+            return
+        
+        # Удаляем сообщение с фото
+        if moderation_session.moderator_photo_message_id:
+            try:
+                await callback.bot.delete_message(
+                    chat_id=callback.from_user.id,
+                    message_id=moderation_session.moderator_photo_message_id
+                )
+            except Exception as e:
+                logger.warning(f"Не удалось удалить сообщение с фото: {e}")
+        
+        # Удаляем информационное сообщение
+        if moderation_session.user_info_message_id:
+            try:
+                await callback.bot.delete_message(
+                    chat_id=callback.from_user.id,
+                    message_id=moderation_session.user_info_message_id
+                )
+            except Exception as e:
+                logger.warning(f"Не удалось удалить информационное сообщение: {e}")
+        
+        # Очищаем message_id в БД
+        async for session in get_session():
+            moderation_session = await get_moderation_session_by_id(session, session_id)
+            if moderation_session:
+                moderation_session.moderator_photo_message_id = None
+                moderation_session.user_info_message_id = None
+                await session.commit()
+        
+        await callback.answer("✅ Подтверждение получено!")
 
 
 @router.callback_query(F.data.startswith("refresh_application_"))
@@ -759,20 +903,24 @@ async def process_user_screenshot(message: Message, state: FSMContext):
         # Сохраняем file_id скриншота
         await set_session_user_photo(session, session_obj, file_id)
         
-        # Отправляем скриншот модератору
+        # Отправляем скриншот модератору и сохраняем message_id для последующего удаления
         bot = message.bot
-        
+        from database.queries import set_moderator_screenshot_message_id
+
         try:
-            await bot.send_photo(
+            sent_message = await bot.send_photo(
                 chat_id=session_obj.moderator_id,
                 photo=file_id,
                 caption=f"📸 Скриншот от пользователя (Заявка #{session_obj.application_id})"
+            )
+            await set_moderator_screenshot_message_id(
+                session, session_obj.id, sent_message.message_id
             )
         except Exception as e:
             logger.error(f"Не удалось отправить скриншот модератору: {e}")
             await session.rollback()
             return
-        
+
         await session.commit()
         
         # Пытаемся удалить сообщение со скриншотом

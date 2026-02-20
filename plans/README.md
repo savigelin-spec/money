@@ -29,3 +29,15 @@
 ## Общая оценка времени для блока 6
 
 **Итого: 22-29 часов работы**
+
+### Блок 9: Удаление сообщений в чате модератора при завершении сессии
+
+**Основной файл:**
+- **блок 9 - удаление сообщений в чате модератора при завершении сессии.md** — обзор и структура подблоков
+
+**Подблоки:**
+- **блок 9.1 - модель данных и запросы.md** — поле `moderator_own_photo_message_id`, миграция, `set_moderator_own_photo_message_id`
+- **блок 9.2 - сохранение message_id при отправке фото модератором.md** — сохранение message_id в `process_moderator_photo`
+- **блок 9.3 - исправление удаления скриншота у модератора.md** — исправление `delete_moderator_screenshot_message_for_application`
+- **блок 9.4 - функция удаления сообщения с фото модератора в его чате.md** — `delete_moderator_own_photo_message_for_application`
+- **блок 9.5 - вызовы удаления в approve и reject.md** — вызовы в `callback_moderator_approve` и `callback_moderator_reject`

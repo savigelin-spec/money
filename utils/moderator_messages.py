@@ -11,6 +11,7 @@ from database.queries import (
     get_or_create_user,
     set_user_main_message_id,
     get_moderator_notifications_for_application,
+    get_moderation_session_by_application_id,
 )
 from utils.telegram_helpers import safe_edit_message_text
 
@@ -205,3 +206,187 @@ async def delete_moderator_notifications_for_application(
             for notification in notifications:
                 await session.delete(notification)
             await session.commit()
+
+
+async def delete_moderator_screenshot_message_for_application(
+    bot: Bot,
+    application_id: int,
+    moderator_id: int | None = None,
+    message_id: int | None = None,
+) -> None:
+    """
+    Удалить сообщение «Скриншот от пользователя» в чате модератора после обработки заявки.
+    Вызывается после approve/reject вместе с delete_moderator_notifications_for_application.
+    
+    Если переданы moderator_id и message_id, использует их напрямую.
+    Иначе ищет сессию по application_id.
+    """
+    # Если переданы данные напрямую, используем их
+    if moderator_id is not None and message_id is not None:
+        logger.info(f"Удаление сообщения со скриншотом {message_id} у модератора {moderator_id} для заявки #{application_id}")
+        try:
+            await bot.delete_message(
+                chat_id=moderator_id,
+                message_id=message_id,
+            )
+            logger.info(
+                f"Удалено сообщение со скриншотом {message_id} у модератора {moderator_id} "
+                f"для заявки #{application_id}"
+            )
+        except TelegramBadRequest as e:
+            error_msg = str(e).lower()
+            if "message to delete not found" in error_msg or "message not found" in error_msg:
+                logger.debug(
+                    f"Сообщение со скриншотом {message_id} уже удалено у модератора {moderator_id}"
+                )
+            else:
+                logger.warning(
+                    f"Не удалось удалить сообщение со скриншотом {message_id} у модератора {moderator_id}: {e}"
+                )
+        
+        # Обнуляем поле в БД
+        async for session in get_session():
+            mod_session = await get_moderation_session_by_application_id(
+                session, application_id
+            )
+            if mod_session:
+                mod_session.moderator_screenshot_message_id = None
+                await session.commit()
+        return
+    
+    # Иначе ищем сессию по application_id
+    logger.info(f"Попытка удалить сообщение со скриншотом для заявки #{application_id}")
+    async for session in get_session():
+        mod_session = await get_moderation_session_by_application_id(
+            session, application_id
+        )
+
+        if not mod_session:
+            logger.warning(f"Сессия модерации не найдена для заявки #{application_id}")
+            return
+        
+        if not mod_session.moderator_screenshot_message_id:
+            logger.debug(f"moderator_screenshot_message_id не установлен для заявки #{application_id}")
+            return
+
+        # Читаем поля в переменные до любых операций с БД
+        moderator_id = mod_session.moderator_id
+        msg_id = mod_session.moderator_screenshot_message_id
+        logger.info(f"Найдена сессия для заявки #{application_id}, moderator_id={moderator_id}, msg_id={msg_id}")
+
+        try:
+            await bot.delete_message(
+                chat_id=moderator_id,
+                message_id=msg_id,
+            )
+            logger.info(
+                f"Удалено сообщение со скриншотом {msg_id} у модератора {moderator_id} "
+                f"для заявки #{application_id}"
+            )
+        except TelegramBadRequest as e:
+            error_msg = str(e).lower()
+            if "message to delete not found" in error_msg or "message not found" in error_msg:
+                logger.debug(
+                    f"Сообщение со скриншотом {msg_id} уже удалено у модератора {moderator_id}"
+                )
+            else:
+                logger.warning(
+                    f"Не удалось удалить сообщение со скриншотом {msg_id} у модератора {moderator_id}: {e}"
+                )
+
+        # Обнуляем поле в БД в той же сессии
+        mod_session.moderator_screenshot_message_id = None
+        await session.commit()
+        return
+
+
+async def delete_moderator_own_photo_message_for_application(
+    bot: Bot,
+    application_id: int,
+    moderator_id: int | None = None,
+    message_id: int | None = None,
+) -> None:
+    """
+    Удалить сообщение с фото модератора в его чате после обработки заявки.
+    Вызывается после approve/reject вместе с delete_moderator_screenshot_message_for_application.
+    
+    Если переданы moderator_id и message_id, использует их напрямую.
+    Иначе ищет сессию по application_id.
+    """
+    # Если переданы данные напрямую, используем их
+    if moderator_id is not None and message_id is not None:
+        logger.info(f"Удаление сообщения с фото модератора {message_id} у модератора {moderator_id} для заявки #{application_id}")
+        try:
+            await bot.delete_message(
+                chat_id=moderator_id,
+                message_id=message_id,
+            )
+            logger.info(
+                f"Удалено сообщение с фото модератора {message_id} у модератора {moderator_id} "
+                f"для заявки #{application_id}"
+            )
+        except TelegramBadRequest as e:
+            error_msg = str(e).lower()
+            if "message to delete not found" in error_msg or "message not found" in error_msg:
+                logger.debug(
+                    f"Сообщение с фото модератора {message_id} уже удалено у модератора {moderator_id}"
+                )
+            else:
+                logger.warning(
+                    f"Не удалось удалить сообщение с фото модератора {message_id} у модератора {moderator_id}: {e}"
+                )
+        
+        # Обнуляем поле в БД
+        async for session in get_session():
+            mod_session = await get_moderation_session_by_application_id(
+                session, application_id
+            )
+            if mod_session:
+                mod_session.moderator_own_photo_message_id = None
+                await session.commit()
+        return
+    
+    # Иначе ищем сессию по application_id
+    logger.info(f"Попытка удалить сообщение с фото модератора для заявки #{application_id}")
+    async for session in get_session():
+        mod_session = await get_moderation_session_by_application_id(
+            session, application_id
+        )
+
+        if not mod_session:
+            logger.warning(f"Сессия модерации не найдена для заявки #{application_id}")
+            return
+        
+        if not mod_session.moderator_own_photo_message_id:
+            logger.debug(f"moderator_own_photo_message_id не установлен для заявки #{application_id}")
+            return
+
+        # Читаем поля в переменные до любых операций с БД
+        moderator_id = mod_session.moderator_id
+        msg_id = mod_session.moderator_own_photo_message_id
+        logger.info(f"Найдена сессия для заявки #{application_id}, moderator_id={moderator_id}, msg_id={msg_id}")
+
+        try:
+            await bot.delete_message(
+                chat_id=moderator_id,
+                message_id=msg_id,
+            )
+            logger.info(
+                f"Удалено сообщение с фото модератора {msg_id} у модератора {moderator_id} "
+                f"для заявки #{application_id}"
+            )
+        except TelegramBadRequest as e:
+            error_msg = str(e).lower()
+            if "message to delete not found" in error_msg or "message not found" in error_msg:
+                logger.debug(
+                    f"Сообщение с фото модератора {msg_id} уже удалено у модератора {moderator_id}"
+                )
+            else:
+                logger.warning(
+                    f"Не удалось удалить сообщение с фото модератора {msg_id} у модератора {moderator_id}: {e}"
+                )
+
+        # Обнуляем поле в БД в той же сессии
+        mod_session.moderator_own_photo_message_id = None
+        await session.commit()
+        return

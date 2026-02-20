@@ -28,6 +28,7 @@ STATUS_PENDING = "pending"
 STATUS_MODERATING = "moderating"
 STATUS_COMPLETED = "completed"
 STATUS_REJECTED = "rejected"
+STATUS_CANCELLED = "cancelled"
 
 # Статусы сессий модерации
 SESSION_ACTIVE = "active"

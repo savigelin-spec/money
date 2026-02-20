@@ -122,6 +122,9 @@ class ModerationSession(Base):
 
     user_main_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     user_info_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    moderator_photo_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    moderator_screenshot_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    moderator_own_photo_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     status: Mapped[str] = mapped_column(String(32), default="active")
 

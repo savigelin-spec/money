@@ -21,6 +21,7 @@ from database.queries import (
     get_completed_moderation_sessions_by_moderator,
     get_moderation_session_by_id,
     set_session_moderator_photo,
+    set_moderator_own_photo_message_id,
     complete_moderation_session,
     update_moderator_stats_after_session,
     get_or_create_moderator_stats,
@@ -443,6 +444,11 @@ async def callback_moderator_approve(callback: CallbackQuery, state: FSMContext)
         user_id = moderation_session.user_id
         application_id = moderation_session.application_id
         
+        # Сохраняем message_id для удаления до завершения сессии
+        moderator_screenshot_msg_id = moderation_session.moderator_screenshot_message_id
+        moderator_own_photo_msg_id = moderation_session.moderator_own_photo_message_id
+        moderator_id = moderation_session.moderator_id
+        
         # Рассчитываем длительность сессии
         duration = int((datetime.utcnow() - moderation_session.created_at).total_seconds())
         
@@ -478,21 +484,45 @@ async def callback_moderator_approve(callback: CallbackQuery, state: FSMContext)
         await db_session.commit()
         
         # Удаляем уведомления о заявке у всех модераторов
-        from utils.moderator_messages import delete_moderator_notifications_for_application
+        from utils.moderator_messages import (
+            delete_moderator_notifications_for_application,
+            delete_moderator_screenshot_message_for_application,
+            delete_moderator_own_photo_message_for_application,
+        )
         try:
             await delete_moderator_notifications_for_application(
                 bot=callback.bot,
                 application_id=application_id
             )
+            # Передаем данные напрямую для надежности
+            if moderator_screenshot_msg_id:
+                await delete_moderator_screenshot_message_for_application(
+                    bot=callback.bot,
+                    application_id=application_id,
+                    moderator_id=moderator_id,
+                    message_id=moderator_screenshot_msg_id,
+                )
+            if moderator_own_photo_msg_id:
+                await delete_moderator_own_photo_message_for_application(
+                    bot=callback.bot,
+                    application_id=application_id,
+                    moderator_id=moderator_id,
+                    message_id=moderator_own_photo_msg_id,
+                )
         except Exception as e:
-            logger.error(f"Ошибка при удалении уведомлений о заявке #{application_id}: {e}")
-        
-        # Отправляем фото модератора пользователю, если оно есть, но не было отправлено
+            logger.error(f"Ошибка при удалении уведомлений о заявке #{application_id}: {e}", exc_info=True)
+
+        # Отправляем фото модератора пользователю, если оно есть, но еще не было отправлено
         bot = callback.bot
         photo_sent = False
         
-        if moderator_photo_file_id:
+        # Проверяем, было ли фото уже отправлено пользователю
+        # Если moderator_photo_message_id установлен, значит фото уже отправлено
+        if moderator_photo_file_id and not moderation_session.moderator_photo_message_id:
             try:
+                from keyboards.user_keyboards import get_moderator_photo_confirmation_keyboard
+                from database.queries import set_moderator_photo_message_id
+                
                 logger.info(
                     f"Попытка отправить фото модератора пользователю {user_id} "
                     f"при подтверждении заявки #{application_id}"
@@ -503,12 +533,18 @@ async def callback_moderator_approve(callback: CallbackQuery, state: FSMContext)
                     caption=(
                         f"📸 Фото от модератора для подтверждения\n\n"
                         f"Заявка #{application_id}"
-                    )
+                    ),
+                    reply_markup=get_moderator_photo_confirmation_keyboard(moderation_session.id)
                 )
+                
+                # Сохраняем message_id фото
+                await set_moderator_photo_message_id(db_session, moderation_session.id, sent_message.message_id)
+                await db_session.flush()
+                
                 photo_sent = True
                 logger.info(
                     f"✅ Фото модератора успешно отправлено пользователю {user_id} "
-                    f"при подтверждении заявки #{application_id}"
+                    f"при подтверждении заявки #{application_id}. Message ID: {sent_message.message_id}"
                 )
             except Exception as e:
                 error_msg = str(e)
@@ -587,6 +623,11 @@ async def callback_moderator_reject(callback: CallbackQuery, state: FSMContext):
         user_id = moderation_session.user_id
         application_id = moderation_session.application_id
         
+        # Сохраняем message_id для удаления до завершения сессии
+        moderator_screenshot_msg_id = moderation_session.moderator_screenshot_message_id
+        moderator_own_photo_msg_id = moderation_session.moderator_own_photo_message_id
+        moderator_id = moderation_session.moderator_id
+        
         # Рассчитываем длительность сессии
         duration = int((datetime.utcnow() - moderation_session.created_at).total_seconds())
         
@@ -621,16 +662,35 @@ async def callback_moderator_reject(callback: CallbackQuery, state: FSMContext):
         
         await db_session.commit()
         
-        # Удаляем уведомления о заявке у всех модераторов
-        from utils.moderator_messages import delete_moderator_notifications_for_application
+        # Удаляем уведомления о заявке у всех модераторов и сообщение со скриншотом
+        from utils.moderator_messages import (
+            delete_moderator_notifications_for_application,
+            delete_moderator_screenshot_message_for_application,
+            delete_moderator_own_photo_message_for_application,
+        )
         try:
             await delete_moderator_notifications_for_application(
                 bot=callback.bot,
                 application_id=application_id
             )
+            # Передаем данные напрямую для надежности
+            if moderator_screenshot_msg_id:
+                await delete_moderator_screenshot_message_for_application(
+                    bot=callback.bot,
+                    application_id=application_id,
+                    moderator_id=moderator_id,
+                    message_id=moderator_screenshot_msg_id,
+                )
+            if moderator_own_photo_msg_id:
+                await delete_moderator_own_photo_message_for_application(
+                    bot=callback.bot,
+                    application_id=application_id,
+                    moderator_id=moderator_id,
+                    message_id=moderator_own_photo_msg_id,
+                )
         except Exception as e:
-            logger.error(f"Ошибка при удалении уведомлений о заявке #{application_id}: {e}")
-        
+            logger.error(f"Ошибка при удалении уведомлений о заявке #{application_id}: {e}", exc_info=True)
+
         # Уведомляем пользователя через информационное сообщение
         bot = callback.bot
         try:
@@ -725,6 +785,10 @@ async def process_moderator_photo(message: Message, state: FSMContext):
         await set_session_moderator_photo(db_session, moderation_session, file_id)
         await db_session.flush()  # Сохраняем изменения перед отправкой
         
+        # Сохраняем message_id сообщения модератора в его чате
+        await set_moderator_own_photo_message_id(db_session, moderation_session.id, message.message_id)
+        await db_session.flush()
+        
         # Отправляем фото пользователю
         bot = message.bot
         user_id = moderation_session.user_id
@@ -736,14 +800,23 @@ async def process_moderator_photo(message: Message, state: FSMContext):
         )
         
         try:
+            from keyboards.user_keyboards import get_moderator_photo_confirmation_keyboard
+            from database.queries import set_moderator_photo_message_id
+            
             sent_message = await bot.send_photo(
                 chat_id=user_id,
                 photo=file_id,
                 caption=(
                     f"📸 Фото от модератора для подтверждения\n\n"
                     f"Заявка #{application_id}"
-                )
+                ),
+                reply_markup=get_moderator_photo_confirmation_keyboard(moderation_session.id)
             )
+            
+            # Сохраняем message_id фото
+            await set_moderator_photo_message_id(db_session, moderation_session.id, sent_message.message_id)
+            await db_session.flush()
+            
             logger.info(
                 f"✅ Фото от модератора {message.from_user.id} успешно отправлено пользователю "
                 f"{user_id} (Заявка #{application_id}). Message ID: {sent_message.message_id}"
@@ -811,11 +884,26 @@ async def process_moderator_photo(message: Message, state: FSMContext):
                 )
         except Exception as e:
             logger.error(f"Не удалось обновить информационное сообщение пользователю {user_id}: {e}")
-        
+
+        # Обновляем главное сообщение модератора видом сессии (без нового сообщения в чате)
         is_completed = moderation_session.status == "completed"
-        await message.answer(
-            f"✅ Фото отправлено пользователю (Заявка #{moderation_session.application_id})",
-            reply_markup=get_moderation_session_keyboard(moderation_session.id, is_completed=is_completed)
+        status_emoji = "🔄" if moderation_session.status == "active" else "✅"
+        session_text = (
+            f"{status_emoji} Сессия модерации #{moderation_session.id}\n\n"
+            f"📝 Заявка: #{application_id}\n"
+            f"👤 Пользователь: {user_id}\n"
+            f"📊 Статус: {moderation_session.status}\n\n"
+            "✅ Скриншот пользователя получен\n"
+            "✅ Фото модератора отправлено\n"
+        )
+        keyboard = get_moderation_session_keyboard(
+            moderation_session.id, is_completed=is_completed
+        )
+        await update_user_main_message(
+            bot=bot,
+            user_id=message.from_user.id,
+            text=session_text,
+            reply_markup=keyboard
         )
         await state.clear()
 

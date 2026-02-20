@@ -57,6 +57,23 @@ def get_back_to_menu_keyboard() -> InlineKeyboardMarkup:
     return keyboard
 
 
+def get_application_confirmation_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения создания заявки"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Подтвердить",
+                callback_data="confirm_create_application"
+            ),
+            InlineKeyboardButton(
+                text="❌ Отменить",
+                callback_data="main_menu"
+            )
+        ]
+    ])
+    return keyboard
+
+
 def get_invoice_expired_keyboard(amount: int) -> InlineKeyboardMarkup:
     """Клавиатура при истечении инвойса с опциями повтора оплаты и возврата в меню"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -74,19 +91,43 @@ def get_invoice_expired_keyboard(amount: int) -> InlineKeyboardMarkup:
     return keyboard
 
 
-def get_application_status_keyboard(application_id: int) -> InlineKeyboardMarkup:
+def get_application_status_keyboard(application_id: int, status: str = "pending") -> InlineKeyboardMarkup:
     """Клавиатура для просмотра статуса заявки"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+    
+    # Для заявок в статусе pending добавляем кнопку отмены
+    if status == "pending":
+        keyboard.inline_keyboard.append([
+            InlineKeyboardButton(
+                text="❌ Отменить заявку",
+                callback_data=f"cancel_application_{application_id}"
+            )
+        ])
+    
+    keyboard.inline_keyboard.append([
+        InlineKeyboardButton(
+            text="🔄 Обновить статус",
+            callback_data=f"refresh_application_{application_id}"
+        )
+    ])
+    
+    keyboard.inline_keyboard.append([
+        InlineKeyboardButton(
+            text="◀️ Главное меню",
+            callback_data="main_menu"
+        )
+    ])
+    
+    return keyboard
+
+
+def get_moderator_photo_confirmation_keyboard(session_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения получения фото от модератора"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="🔄 Обновить статус",
-                callback_data=f"refresh_application_{application_id}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="◀️ Назад",
-                callback_data="my_applications"
+                text="✅ Получил подтверждение",
+                callback_data=f"confirm_moderator_photo_{session_id}"
             )
         ]
     ])
@@ -101,7 +142,8 @@ def get_applications_list_keyboard(applications: list) -> InlineKeyboardMarkup:
             "pending": "⏳",
             "moderating": "🔄",
             "completed": "✅",
-            "rejected": "❌"
+            "rejected": "❌",
+            "cancelled": "🚫"
         }.get(app.status, "❓")
         
         buttons.append([
