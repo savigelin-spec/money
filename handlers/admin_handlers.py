@@ -50,14 +50,13 @@ async def cmd_admin(message: Message, state: FSMContext):
     admin_text = (
         "👑 Панель администратора\n\n"
         "Доступные команды:\n"
-        "/set_role <user_id> <role> - Назначить роль пользователю\n"
-        "/list_users - Список пользователей\n"
-        "/user_info <user_id> - Информация о пользователе\n"
-        "/set_moderator <user_id> - Назначить модератора\n"
-        "/remove_moderator <user_id> - Убрать роль модератора\n\n"
+        "/set_role &lt;user_id&gt; &lt;role&gt; — назначить роль\n"
+        "/list_users — список пользователей\n"
+        "/user_info &lt;user_id&gt; — информация о пользователе\n"
+        "/set_moderator &lt;user_id&gt; — назначить модератора\n"
+        "/remove_moderator &lt;user_id&gt; — снять модератора\n\n"
         "Роли: user, moderator, admin"
     )
-    
     await message.answer(admin_text)
 
 
@@ -72,7 +71,7 @@ async def cmd_set_role(message: Message):
         if len(parts) != 3:
             await message.answer(
                 "❌ Неверный формат команды.\n"
-                "Использование: /set_role <user_id> <role>\n"
+                "Использование: /set_role &lt;user_id&gt; &lt;role&gt;\n"
                 "Роли: user, moderator, admin"
             )
             return
@@ -127,7 +126,7 @@ async def cmd_set_moderator(message: Message):
         if len(parts) != 2:
             await message.answer(
                 "❌ Неверный формат команды.\n"
-                "Использование: /set_moderator <user_id>"
+                "Использование: /set_moderator &lt;user_id&gt;"
             )
             return
         
@@ -170,7 +169,7 @@ async def cmd_remove_moderator(message: Message):
         if len(parts) != 2:
             await message.answer(
                 "❌ Неверный формат команды.\n"
-                "Использование: /remove_moderator <user_id>"
+                "Использование: /remove_moderator &lt;user_id&gt;"
             )
             return
         
@@ -220,7 +219,7 @@ async def cmd_user_info(message: Message):
         if len(parts) != 2:
             await message.answer(
                 "❌ Неверный формат команды.\n"
-                "Использование: /user_info <user_id>"
+                "Использование: /user_info &lt;user_id&gt;"
             )
             return
         

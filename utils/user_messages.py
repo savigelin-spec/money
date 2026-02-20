@@ -44,10 +44,14 @@ async def get_or_create_user_main_message(
                 )
                 return user.main_message_id
             except TelegramBadRequest as e:
-                # Сообщение удалено или недоступно - создаем новое
-                if "message to edit not found" in str(e).lower() or "message can't be edited" in str(e).lower():
+                err = str(e).lower()
+                if "message is not modified" in err:
+                    # Контент тот же — пользователь не увидит изменений; шлём новое сообщение, чтобы меню было внизу чата
+                    pass
+                elif "message to edit not found" in err or "message can't be edited" in err:
                     logger.warning(f"Главное сообщение {user.main_message_id} недоступно, создаем новое")
                     user.main_message_id = None
+                    await session.commit()
                 else:
                     raise
 
