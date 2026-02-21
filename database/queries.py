@@ -312,6 +312,38 @@ async def get_application_by_id(
     return result.scalar_one_or_none()
 
 
+async def get_user_queue_count(session: AsyncSession, user_id: int) -> int:
+    """Количество заявок пользователя в очереди (pending или moderating)."""
+    q = (
+        select(func.count(Application.id))
+        .where(Application.user_id == user_id)
+        .where(Application.status.in_([STATUS_PENDING, STATUS_MODERATING]))
+    )
+    r = await session.execute(q)
+    return int(r.scalar() or 0)
+
+
+async def get_user_completed_count(
+    session: AsyncSession,
+    user_id: int,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> int:
+    """Количество успешно завершённых заявок пользователя за период (по completed_at)."""
+    q = (
+        select(func.count(Application.id))
+        .where(Application.user_id == user_id)
+        .where(Application.status == STATUS_COMPLETED)
+        .where(Application.completed_at.isnot(None))
+    )
+    if start_date is not None:
+        q = q.where(Application.completed_at >= start_date)
+    if end_date is not None:
+        q = q.where(Application.completed_at <= end_date)
+    r = await session.execute(q)
+    return int(r.scalar() or 0)
+
+
 async def get_active_moderation_sessions_by_moderator(
     session: AsyncSession,
     moderator_id: int,

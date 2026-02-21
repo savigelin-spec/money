@@ -19,6 +19,29 @@ from database.queries import (
 logger = logging.getLogger(__name__)
 
 
+def get_main_menu_text(
+    first_name: str | None,
+    balance: int,
+    queue_count: int,
+    completed_today: int,
+    completed_week: int,
+    completed_month: int,
+    completed_total: int,
+) -> str:
+    """Текст главного меню с приветствием, балансом, очередью и статистикой покупок 18+."""
+    name = (first_name or "").strip() or "Пользователь"
+    return (
+        f"Добро пожаловать в BEZPALEVA, {name}\n\n"
+        f"Баланс: {balance} ⭐\n"
+        f"В очереди: {queue_count}\n\n"
+        "Статистика покупок 18+\n"
+        f"Сегодня — {completed_today}\n"
+        f"Неделя — {completed_week}\n"
+        f"Месяц — {completed_month}\n\n"
+        f"Успешных покупок всего: {completed_total}"
+    )
+
+
 async def get_or_create_user_main_message(
     bot: Bot,
     user_id: int,

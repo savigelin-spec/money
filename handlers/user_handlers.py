@@ -24,6 +24,8 @@ from database.queries import (
     set_user_main_message_id,
     get_all_moderators,
     get_moderation_session_by_id,
+    get_user_queue_count,
+    get_user_completed_count,
 )
 from keyboards.user_keyboards import (
     get_main_menu_keyboard,
@@ -39,8 +41,9 @@ from utils.user_messages import (
     get_or_create_user_info_message,
     update_user_info_message,
     update_user_main_message,
+    get_main_menu_text,
 )
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -55,7 +58,10 @@ start_router = Router()
 async def cmd_start(message: Message, state: FSMContext):
     """Обработчик команды /start"""
     await state.clear()
-    
+    main_menu_text = ""
+    is_moderator_user = False
+    is_admin_user = False
+
     async for session in get_session():
         user = await get_or_create_user(
             session,
@@ -64,35 +70,48 @@ async def cmd_start(message: Message, state: FSMContext):
             first_name=message.from_user.first_name,
             last_name=message.from_user.last_name,
         )
-        await session.commit()
-    
-    welcome_text = (
-        "👋 Добро пожаловать в бот для подтверждения возраста КСО!\n\n"
-        "Выберите действие:"
-    )
-    
-    # Проверяем, является ли пользователь модератором и админом
-    async for session in get_session():
-        user = await get_or_create_user(
-            session,
-            user_id=message.from_user.id,
-        )
         is_moderator_user = is_moderator_or_admin(user)
         is_admin_user = user.role == ROLE_ADMIN
+
+        queue_count = await get_user_queue_count(session, message.from_user.id)
+        now = datetime.utcnow()
+        start_today = datetime(now.year, now.month, now.day)
+        completed_today = await get_user_completed_count(
+            session, message.from_user.id, start_today, now
+        )
+        completed_week = await get_user_completed_count(
+            session, message.from_user.id, now - timedelta(days=7), now
+        )
+        completed_month = await get_user_completed_count(
+            session, message.from_user.id, now - timedelta(days=30), now
+        )
+        completed_total = await get_user_completed_count(
+            session, message.from_user.id, None, None
+        )
+        main_menu_text = get_main_menu_text(
+            user.first_name,
+            user.balance,
+            queue_count,
+            completed_today,
+            completed_week,
+            completed_month,
+            completed_total,
+        )
         await session.commit()
-    
+        break
+
     # Создаем или обновляем главное сообщение с меню
     main_msg_id = await get_or_create_user_main_message(
         bot=message.bot,
         user_id=message.from_user.id,
-        text=welcome_text,
+        text=main_menu_text,
         reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user, is_admin=is_admin_user)
     )
     # Если не удалось создать/обновить главное сообщение (например, первый запрос к БД),
     # отправляем ответ в чат и сохраняем message_id, чтобы меню работало со второго раза
     if main_msg_id is None:
         sent = await message.answer(
-            welcome_text,
+            main_menu_text,
             reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user, is_admin=is_admin_user)
         )
         async for session in get_session():
@@ -210,14 +229,40 @@ async def callback_go_to_moderator_panel(callback: CallbackQuery, state: FSMCont
 async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
     """Возврат в главное меню"""
     await state.clear()
-    
-    # Проверяем, является ли пользователь модератором и админом
+    main_menu_text = ""
+    is_moderator_user = False
+    is_admin_user = False
+
     async for session in get_session():
         user = await get_or_create_user(session, user_id=callback.from_user.id)
         is_moderator_user = is_moderator_or_admin(user)
         is_admin_user = user.role == ROLE_ADMIN
-        
-        # Удаляем инвойс, если он есть
+
+        queue_count = await get_user_queue_count(session, callback.from_user.id)
+        now = datetime.utcnow()
+        start_today = datetime(now.year, now.month, now.day)
+        completed_today = await get_user_completed_count(
+            session, callback.from_user.id, start_today, now
+        )
+        completed_week = await get_user_completed_count(
+            session, callback.from_user.id, now - timedelta(days=7), now
+        )
+        completed_month = await get_user_completed_count(
+            session, callback.from_user.id, now - timedelta(days=30), now
+        )
+        completed_total = await get_user_completed_count(
+            session, callback.from_user.id, None, None
+        )
+        main_menu_text = get_main_menu_text(
+            user.first_name,
+            user.balance,
+            queue_count,
+            completed_today,
+            completed_week,
+            completed_month,
+            completed_total,
+        )
+
         if user.invoice_message_id:
             try:
                 await callback.bot.delete_message(
@@ -229,13 +274,14 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
             except Exception as e:
                 logger.debug(f"Не удалось удалить инвойс (message_id={user.invoice_message_id}): {e}")
                 user.invoice_message_id = None
-        
+
         await session.commit()
-    
+        break
+
     await update_user_main_message(
         bot=callback.bot,
         user_id=callback.from_user.id,
-        text="Главное меню:",
+        text=main_menu_text,
         reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user, is_admin=is_admin_user)
     )
     await callback.answer()
