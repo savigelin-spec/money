@@ -71,13 +71,14 @@ async def cmd_start(message: Message, state: FSMContext):
         "Выберите действие:"
     )
     
-    # Проверяем, является ли пользователь модератором
+    # Проверяем, является ли пользователь модератором и админом
     async for session in get_session():
         user = await get_or_create_user(
             session,
             user_id=message.from_user.id,
         )
         is_moderator_user = is_moderator_or_admin(user)
+        is_admin_user = user.role == ROLE_ADMIN
         await session.commit()
     
     # Создаем или обновляем главное сообщение с меню
@@ -85,14 +86,14 @@ async def cmd_start(message: Message, state: FSMContext):
         bot=message.bot,
         user_id=message.from_user.id,
         text=welcome_text,
-        reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user)
+        reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user, is_admin=is_admin_user)
     )
     # Если не удалось создать/обновить главное сообщение (например, первый запрос к БД),
     # отправляем ответ в чат и сохраняем message_id, чтобы меню работало со второго раза
     if main_msg_id is None:
         sent = await message.answer(
             welcome_text,
-            reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user)
+            reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user, is_admin=is_admin_user)
         )
         async for session in get_session():
             await set_user_main_message_id(session, message.from_user.id, sent.message_id)
@@ -210,10 +211,11 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
     """Возврат в главное меню"""
     await state.clear()
     
-    # Проверяем, является ли пользователь модератором
+    # Проверяем, является ли пользователь модератором и админом
     async for session in get_session():
         user = await get_or_create_user(session, user_id=callback.from_user.id)
         is_moderator_user = is_moderator_or_admin(user)
+        is_admin_user = user.role == ROLE_ADMIN
         
         # Удаляем инвойс, если он есть
         if user.invoice_message_id:
@@ -234,7 +236,7 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
         bot=callback.bot,
         user_id=callback.from_user.id,
         text="Главное меню:",
-        reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user)
+        reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user, is_admin=is_admin_user)
     )
     await callback.answer()
 

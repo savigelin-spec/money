@@ -3,7 +3,7 @@
 """
 import logging
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
 from database.db import get_session
@@ -26,15 +26,14 @@ from utils.marketing import (
     get_average_ltv,
     get_retention_rate,
 )
-from utils.telegram_helpers import safe_edit_message_text
-from utils.admin_messages import update_admin_message
+from utils.user_messages import update_user_main_message
 from keyboards.admin_keyboards import (
     get_statistics_main_keyboard,
     get_statistics_period_keyboard,
     get_statistics_type_keyboard,
-    get_admin_panel_keyboard,
+    get_admin_back_keyboard,
 )
-from handlers.admin_handlers import check_admin_access
+from handlers.admin_handlers import check_admin_access, ADMIN_PANEL_TITLE
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -57,13 +56,11 @@ async def callback_admin_statistics(callback: CallbackQuery, state: FSMContext):
             answered = True
             return
         text = "📊 Статистика бота\n\nВыберите раздел:"
-        await update_admin_message(
+        await update_user_main_message(
             bot=callback.bot,
             user_id=callback.from_user.id,
             text=text,
             reply_markup=get_statistics_main_keyboard(),
-            message_id=callback.message.message_id if callback.message else None,
-            chat_id=callback.message.chat.id if callback.message else None,
         )
         await callback.answer()
         answered = True
@@ -95,13 +92,11 @@ async def callback_stats_period(callback: CallbackQuery, state: FSMContext):
             await session.commit()
             text = format_comprehensive_stats(stats)
             break
-        await update_admin_message(
+        await update_user_main_message(
             bot=callback.bot,
             user_id=callback.from_user.id,
             text=text,
             reply_markup=get_statistics_period_keyboard(),
-            message_id=callback.message.message_id if callback.message else None,
-            chat_id=callback.message.chat.id if callback.message else None,
         )
         await callback.answer()
         answered = True
@@ -151,13 +146,11 @@ async def callback_stats_type(callback: CallbackQuery, state: FSMContext):
                 text = format_comprehensive_stats(data)
             await session.commit()
             break
-        await update_admin_message(
+        await update_user_main_message(
             bot=callback.bot,
             user_id=callback.from_user.id,
             text=text,
             reply_markup=get_statistics_type_keyboard(),
-            message_id=callback.message.message_id if callback.message else None,
-            chat_id=callback.message.chat.id if callback.message else None,
         )
         await callback.answer()
         answered = True
@@ -174,7 +167,7 @@ async def callback_stats_type(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "admin_panel_back")
 async def callback_admin_panel_back(callback: CallbackQuery, state: FSMContext):
-    """Возврат к панели администратора (текст + кнопка Статистика)."""
+    """Возврат к панели администратора."""
     await state.clear()
     answered = False
     try:
@@ -182,28 +175,47 @@ async def callback_admin_panel_back(callback: CallbackQuery, state: FSMContext):
             answered = True
             return
         from keyboards.admin_keyboards import get_admin_panel_keyboard
-        text = (
-            "👑 Панель администратора\n\n"
-            "Доступные команды:\n"
-            "/set_role &lt;user_id&gt; &lt;role&gt; — назначить роль\n"
-            "/list_users — список пользователей\n"
-            "/user_info &lt;user_id&gt; — информация о пользователе\n"
-            "/set_moderator &lt;user_id&gt; — назначить модератора\n"
-            "/remove_moderator &lt;user_id&gt; — снять модератора\n\n"
-            "Роли: user, moderator, admin"
-        )
-        await update_admin_message(
+        await update_user_main_message(
             bot=callback.bot,
             user_id=callback.from_user.id,
-            text=text,
+            text=ADMIN_PANEL_TITLE,
             reply_markup=get_admin_panel_keyboard(),
-            message_id=callback.message.message_id if callback.message else None,
-            chat_id=callback.message.chat.id if callback.message else None,
         )
         await callback.answer()
         answered = True
     except Exception as e:
         logger.exception("Ошибка в callback_admin_panel_back: %s", e)
+        raise
+    finally:
+        if not answered:
+            try:
+                await callback.answer()
+            except Exception:
+                pass
+
+
+@router.callback_query(F.data == "admin_stats_block10")
+async def callback_admin_stats_block10(callback: CallbackQuery, state: FSMContext):
+    """Заглушка: Блок 10 — в разработке."""
+    await state.clear()
+    answered = False
+    try:
+        if not await check_admin_access(callback):
+            answered = True
+            return
+        text = "📦 Блок 10 — в разработке.\n\nРаздел будет добавлен в следующих версиях."
+        await update_user_main_message(
+            bot=callback.bot,
+            user_id=callback.from_user.id,
+            text=text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ К статистике", callback_data="admin_statistics")],
+            ]),
+        )
+        await callback.answer()
+        answered = True
+    except Exception as e:
+        logger.exception("Ошибка в callback_admin_stats_block10: %s", e)
         raise
     finally:
         if not answered:

@@ -3,13 +3,21 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Iterable, Sequence
+from datetime import datetime, timedelta
+from typing import Any, Iterable, Sequence
 
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import APPLICATION_COST, TRANSACTION_WITHDRAWAL, TRANSACTION_DEPOSIT
+from config import (
+    APPLICATION_COST,
+    TRANSACTION_WITHDRAWAL,
+    TRANSACTION_DEPOSIT,
+    STATUS_COMPLETED,
+    STATUS_REJECTED,
+    STATUS_PENDING,
+    STATUS_MODERATING,
+)
 from .models import (
     User,
     Application,
@@ -541,4 +549,277 @@ async def delete_moderator_notification(
     if notification:
         await session.delete(notification)
         await session.flush()
+
+
+# --- Статистика (для utils.statistics и utils.marketing) ---
+
+def _transaction_date_filter(q, start_date: datetime | None, end_date: datetime | None):
+    """Применить фильтр по дате к запросу транзакций."""
+    if start_date is not None:
+        q = q.where(Transaction.created_at >= start_date)
+    if end_date is not None:
+        q = q.where(Transaction.created_at <= end_date)
+    return q
+
+
+def _application_date_filter(q, start_date: datetime | None, end_date: datetime | None):
+    """Применить фильтр по дате к запросу заявок."""
+    if start_date is not None:
+        q = q.where(Application.created_at >= start_date)
+    if end_date is not None:
+        q = q.where(Application.created_at <= end_date)
+    return q
+
+
+def _user_date_filter(q, start_date: datetime | None, end_date: datetime | None):
+    """Применить фильтр по дате к запросу пользователей."""
+    if start_date is not None:
+        q = q.where(User.created_at >= start_date)
+    if end_date is not None:
+        q = q.where(User.created_at <= end_date)
+    return q
+
+
+async def get_total_revenue(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> int:
+    """Сумма поступлений (депозиты) за период."""
+    q = select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+        Transaction.type == TRANSACTION_DEPOSIT
+    )
+    q = _transaction_date_filter(q, start_date, end_date)
+    r = await session.execute(q)
+    return int(r.scalar() or 0)
+
+
+async def get_total_deposits(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> int:
+    """Количество депозитов за период (число транзакций)."""
+    q = select(func.count(Transaction.id)).where(
+        Transaction.type == TRANSACTION_DEPOSIT
+    )
+    q = _transaction_date_filter(q, start_date, end_date)
+    r = await session.execute(q)
+    return int(r.scalar() or 0)
+
+
+async def get_total_withdrawals(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> int:
+    """Сумма списаний (по модулю) за период."""
+    q = select(func.coalesce(func.sum(func.abs(Transaction.amount)), 0)).where(
+        Transaction.type == TRANSACTION_WITHDRAWAL
+    )
+    q = _transaction_date_filter(q, start_date, end_date)
+    r = await session.execute(q)
+    return int(r.scalar() or 0)
+
+
+async def get_net_revenue(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> int:
+    """Чистая выручка: депозиты минус списания."""
+    total_d = await get_total_revenue(session, start_date, end_date)
+    total_w = await get_total_withdrawals(session, start_date, end_date)
+    return total_d - total_w
+
+
+async def get_total_applications(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> int:
+    """Общее количество заявок за период."""
+    q = select(func.count(Application.id))
+    q = _application_date_filter(q, start_date, end_date)
+    r = await session.execute(q)
+    return int(r.scalar() or 0)
+
+
+async def get_applications_by_status(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> dict[str, int]:
+    """Количество заявок по статусам за период."""
+    q = (
+        select(Application.status, func.count(Application.id))
+        .group_by(Application.status)
+    )
+    q = _application_date_filter(q, start_date, end_date)
+    r = await session.execute(q)
+    return {row[0]: row[1] for row in r.all()}
+
+
+async def get_application_success_rate(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> float:
+    """Доля завершённых успешно (completed) за период, в процентах."""
+    total = await get_total_applications(session, start_date, end_date)
+    if total == 0:
+        return 0.0
+    q = select(func.count(Application.id)).where(Application.status == STATUS_COMPLETED)
+    q = _application_date_filter(q, start_date, end_date)
+    r = await session.execute(q)
+    completed = int(r.scalar() or 0)
+    return (completed / total) * 100.0
+
+
+async def get_average_processing_time(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> float:
+    """Среднее время обработки заявки (от started_at до completed_at) в секундах."""
+    # (julianday(completed_at) - julianday(started_at)) * 86400 = секунды
+    q = (
+        select(
+            func.avg(
+                (func.julianday(Application.completed_at) - func.julianday(Application.started_at))
+                * 86400
+            )
+        )
+        .where(Application.status.in_([STATUS_COMPLETED, STATUS_REJECTED]))
+        .where(Application.started_at.isnot(None))
+        .where(Application.completed_at.isnot(None))
+    )
+    q = _application_date_filter(q, start_date, end_date)
+    r = await session.execute(q)
+    val = r.scalar()
+    return float(val) if val is not None else 0.0
+
+
+async def get_average_queue_time(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> float:
+    """Среднее время в очереди (от created_at до started_at) в секундах."""
+    q = (
+        select(
+            func.avg(
+                (func.julianday(Application.started_at) - func.julianday(Application.created_at))
+                * 86400
+            )
+        )
+        .where(Application.started_at.isnot(None))
+    )
+    q = _application_date_filter(q, start_date, end_date)
+    r = await session.execute(q)
+    val = r.scalar()
+    return float(val) if val is not None else 0.0
+
+
+async def get_total_users(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> int:
+    """Количество пользователей, зарегистрированных за период."""
+    q = select(func.count(User.user_id))
+    q = _user_date_filter(q, start_date, end_date)
+    r = await session.execute(q)
+    return int(r.scalar() or 0)
+
+
+async def get_active_users(session: AsyncSession, days: int = 30) -> int:
+    """Количество пользователей с активностью (заявка или транзакция) за последние N дней."""
+    since = datetime.utcnow() - timedelta(days=days)
+    # Пользователи с заявкой или транзакцией после since
+    app_users = select(func.count(func.distinct(Application.user_id))).where(
+        Application.created_at >= since
+    )
+    tx_users = select(func.count(func.distinct(Transaction.user_id))).where(
+        Transaction.created_at >= since
+    )
+    r1 = await session.execute(app_users)
+    r2 = await session.execute(tx_users)
+    c1 = int(r1.scalar() or 0)
+    c2 = int(r2.scalar() or 0)
+    # Приближение: объединение через подзапрос (уникальные user_id)
+    sub = (
+        select(Application.user_id).where(Application.created_at >= since)
+        .union(select(Transaction.user_id).where(Transaction.created_at >= since))
+    ).subquery()
+    r = await session.execute(select(func.count(func.distinct(sub.c.user_id))))
+    return int(r.scalar() or 0)
+
+
+async def get_users_by_role(session: AsyncSession) -> dict[str, int]:
+    """Количество пользователей по ролям."""
+    q = select(User.role, func.count(User.user_id)).group_by(User.role)
+    r = await session.execute(q)
+    return {row[0]: row[1] for row in r.all()}
+
+
+async def get_users_by_source(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> dict[str, Any]:
+    """Количество пользователей по источнику трафика. Без UTM возвращаем всех как 'direct'."""
+    q = select(func.count(User.user_id))
+    q = _user_date_filter(q, start_date, end_date)
+    r = await session.execute(q)
+    total = int(r.scalar() or 0)
+    return {"direct": total}
+
+
+async def get_traffic_source_stats(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> dict[str, Any]:
+    """Статистика по источникам трафика. Заглушка при отсутствии UTM."""
+    return {}
+
+
+async def get_top_sources_by_revenue(
+    session: AsyncSession,
+    limit: int = 10,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Топ источников по доходу. Заглушка при отсутствии UTM."""
+    return []
+
+
+async def get_top_sources_by_users(
+    session: AsyncSession,
+    limit: int = 10,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Топ источников по пользователям. Заглушка при отсутствии UTM."""
+    return []
+
+
+async def get_top_sources_by_conversion(
+    session: AsyncSession,
+    limit: int = 10,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Топ источников по конверсии. Заглушка при отсутствии UTM."""
+    return []
+
+
+async def get_campaign_stats(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> dict[str, Any]:
+    """Статистика по кампаниям. Заглушка при отсутствии UTM."""
+    return {}
 

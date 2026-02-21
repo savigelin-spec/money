@@ -5,7 +5,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import APPLICATION_COST
 
 
-def get_main_menu_keyboard(is_moderator: bool = False) -> InlineKeyboardMarkup:
+def get_main_menu_keyboard(is_moderator: bool = False, is_admin: bool = False) -> InlineKeyboardMarkup:
     """Главное меню пользователя"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -38,6 +38,15 @@ def get_main_menu_keyboard(is_moderator: bool = False) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text="👮 Перейти в модераторы",
                 callback_data="go_to_moderator_panel"
+            )
+        ])
+    
+    # Добавляем кнопку для администраторов
+    if is_admin:
+        keyboard.inline_keyboard.append([
+            InlineKeyboardButton(
+                text="👑 Панель администратора",
+                callback_data="go_to_admin_panel"
             )
         ])
     

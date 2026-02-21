@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 
 from config import BOT_TOKEN
 from database.db import init_db
-from handlers import user_handlers, moderator_handlers, admin_handlers, payment_handlers
+from handlers import user_handlers, moderator_handlers, admin_handlers, admin_statistics_handlers, payment_handlers
 
 # Настройка логирования
 logging.basicConfig(
@@ -49,6 +49,7 @@ async def main():
     dp.include_router(payment_handlers.router)  # Платежи должны обрабатываться первыми
     dp.include_router(moderator_handlers.router)  # Модератор
     dp.include_router(admin_handlers.router)
+    dp.include_router(admin_statistics_handlers.router)
     dp.include_router(user_handlers.router)  # Пользователь в конце
 
     logger.info("Бот запущен...")
