@@ -42,6 +42,17 @@ class User(Base):
         DateTime, default=datetime.utcnow
     )
 
+    # UTM / источники трафика (добавляются миграцией, объявление для запросов)
+    traffic_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    traffic_campaign: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    traffic_medium: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    traffic_content: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    traffic_term: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    referrer_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    first_action_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    first_deposit_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    first_application_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     # отношения
     applications: Mapped[list["Application"]] = relationship(
         back_populates="user",
@@ -131,6 +142,9 @@ class ModerationSession(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow
     )
+    last_user_activity_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
 
     # отношения
     application: Mapped["Application"] = relationship(
@@ -143,6 +157,23 @@ class ModerationSession(Base):
     moderator: Mapped["User"] = relationship(
         back_populates="moderation_sessions_as_moderator",
         foreign_keys=[moderator_id],
+    )
+
+
+class ModerationSessionMessage(Base):
+    """Сообщение бота в лайв-чате сессии (для удаления при завершении)."""
+
+    __tablename__ = "moderation_session_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("moderation_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    chat_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    message_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow
     )
 
 
@@ -211,4 +242,41 @@ class ModeratorNotification(Base):
         Index('ix_moderator_notifications_application_id', 'application_id'),
         Index('ix_moderator_notifications_moderator_id', 'moderator_id'),
     )
+
+
+class TrafficSourceCost(Base):
+    """Затраты на источник трафика (RUB) для расчёта ROI/ROAS/CPA."""
+
+    __tablename__ = "traffic_source_costs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    cost_rub: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow
+    )
+
+
+class TrafficChannel(Base):
+    """Канал трафика — логическая группа источников (тегов) для отчёта «По каналам»."""
+
+    __tablename__ = "traffic_channels"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow
+    )
+
+
+class TrafficChannelSource(Base):
+    """Связь канала с источником трафика (тег). Один канал — много источников."""
+
+    __tablename__ = "traffic_channel_sources"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    channel_id: Mapped[int] = mapped_column(
+        ForeignKey("traffic_channels.id", ondelete="CASCADE"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
 

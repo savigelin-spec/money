@@ -38,9 +38,27 @@ def parse_utm_params(text: str) -> dict[str, Any]:
                 elif key == "ref":
                     params["source"] = f"ref_{value.strip()}"
     else:
-        params["source"] = f"ref_{text.strip()}"
+        # Уже помеченный источник (ads_, camp_ и т.д.) сохраняем как есть
+        raw = " ".join(text.split()).strip()  # нормализация пробелов
+        if raw.startswith("ads_") or raw.startswith("camp_") or raw.startswith("ref_"):
+            params["source"] = raw
+        else:
+            params["source"] = f"ref_{raw}"
 
     return params
+
+
+def extract_channel_from_source(source: str) -> str | None:
+    """
+    Из источника формата ads_{{channel}}{{nn}} извлекает метку канала трафика.
+    Примеры: ads_danya01 -> danya; ads_testttt01 -> testttt.
+    Для ref_*, direct и несовпадающих форматов возвращает None.
+    """
+    if not source or not source.startswith("ads_"):
+        return None
+    rest = source[4:]  # после "ads_"
+    channel = rest.rstrip("0123456789")
+    return channel if channel else None
 
 
 def normalize_traffic_source(params: dict[str, Any]) -> dict[str, Any]:

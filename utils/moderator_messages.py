@@ -5,6 +5,7 @@ import logging
 from typing import Optional
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.db import get_session
 from database.queries import (
@@ -166,17 +167,17 @@ async def update_moderator_message(
 async def delete_moderator_notifications_for_application(
     bot: Bot,
     application_id: int,
+    db_session: Optional[AsyncSession] = None,
 ) -> None:
     """
-    Удалить все уведомления модераторов о заявке.
-    Вызывается после обработки заявки (approve/reject).
+    Удалить все уведомления модераторов о заявке (сообщения в Telegram и записи в БД).
+    Если передан db_session, используется он и commit не вызывается (коммитит вызывающий).
+    Иначе открывается своя сессия и делается commit (для вызовов вне delete_all_session_messages).
     """
-    async for session in get_session():
+    if db_session is not None:
         notifications = await get_moderator_notifications_for_application(
-            session, application_id
+            db_session, application_id
         )
-
-        # Удаляем сообщения в Telegram
         for notification in notifications:
             try:
                 await bot.delete_message(
@@ -199,8 +200,36 @@ async def delete_moderator_notifications_for_application(
                         f"Ошибка при удалении уведомления {notification.message_id} "
                         f"для модератора {notification.moderator_id}: {e}"
                     )
+        for notification in notifications:
+            await db_session.delete(notification)
+        return
 
-        # Удаляем записи из БД в той же сессии, в которой загрузили
+    async for session in get_session():
+        notifications = await get_moderator_notifications_for_application(
+            session, application_id
+        )
+        for notification in notifications:
+            try:
+                await bot.delete_message(
+                    chat_id=notification.moderator_id,
+                    message_id=notification.message_id
+                )
+                logger.info(
+                    f"Удалено уведомление о заявке #{application_id} "
+                    f"для модератора {notification.moderator_id}"
+                )
+            except TelegramBadRequest as e:
+                error_msg = str(e).lower()
+                if "message to delete not found" in error_msg or "message not found" in error_msg:
+                    logger.debug(
+                        f"Уведомление {notification.message_id} уже удалено "
+                        f"для модератора {notification.moderator_id}"
+                    )
+                else:
+                    logger.error(
+                        f"Ошибка при удалении уведомления {notification.message_id} "
+                        f"для модератора {notification.moderator_id}: {e}"
+                    )
         for notification in notifications:
             await session.delete(notification)
         await session.commit()

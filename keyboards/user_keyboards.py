@@ -137,6 +137,30 @@ def get_moderator_photo_confirmation_keyboard(session_id: int) -> InlineKeyboard
     return keyboard
 
 
+def get_user_end_session_keyboard(session_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура «Завершить сессию» для пользователя при активной сессии."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="Завершить сессию",
+                callback_data=f"user_end_session_{session_id}"
+            )
+        ]
+    ])
+
+
+def get_dismiss_notification_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура с кнопкой «Удалить уведомление» (красная кнопка — выделена эмодзи)."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="❌ Удалить уведомление",
+                callback_data="dismiss_notification",
+            )
+        ]
+    ])
+
+
 def get_applications_list_keyboard(applications: list) -> InlineKeyboardMarkup:
     """Клавиатура со списком заявок пользователя"""
     buttons = []

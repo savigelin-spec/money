@@ -86,3 +86,87 @@ def get_statistics_type_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔗 Трафик", callback_data="stats_type_traffic")],
         [InlineKeyboardButton(text="◀️ К статистике", callback_data="admin_statistics")],
     ])
+
+
+def get_marketing_detail_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура экрана «Подробная статистика»: Обновить, Назад."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 Обновить", callback_data="stats_marketing_refresh"),
+            InlineKeyboardButton(text="◀️ Назад", callback_data="admin_statistics"),
+        ],
+    ])
+
+
+def get_traffic_top_sources_keyboard(
+    sources: list[dict],
+    current_page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    """
+    Клавиатура отчёта «Топ источников»: кнопки источников на странице,
+    пагинация, Обновить, По каналам, Назад.
+    """
+    rows = []
+    if sources:
+        source_buttons = [
+            InlineKeyboardButton(
+                text=f"💸 {s.get('source', '')[:32]}",
+                callback_data=f"traffic_src_{s.get('source', '')}"[:64],
+            )
+            for s in sources
+        ]
+        rows.append(source_buttons)
+    pagination = []
+    for p in range(1, min(total_pages + 1, 6)):
+        if p == current_page:
+            pagination.append(InlineKeyboardButton(text=f"•{p}•", callback_data=f"traffic_page_{p}"))
+        else:
+            pagination.append(InlineKeyboardButton(text=str(p), callback_data=f"traffic_page_{p}"))
+    if total_pages > 1 and current_page < total_pages:
+        pagination.append(InlineKeyboardButton(text="▶", callback_data=f"traffic_page_{current_page + 1}"))
+    if pagination:
+        rows.append(pagination)
+    rows.append([
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="traffic_top_refresh"),
+        InlineKeyboardButton(text="📊 По каналам", callback_data="traffic_top_by_channels"),
+    ])
+    rows.append([InlineKeyboardButton(text="◀️ К статистике", callback_data="admin_statistics")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_traffic_channels_keyboard(
+    channels: list[dict],
+    current_page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    """
+    Клавиатура отчёта «Статистика по каналам»: кнопки каналов на странице,
+    пагинация, Обновить, По тегам, К статистике.
+    """
+    rows = []
+    if channels:
+        channel_buttons = [
+            InlineKeyboardButton(
+                text=f"💸 {ch.get('channel', '')[:32]}",
+                callback_data=f"traffic_ch_{ch.get('channel', '')}"[:64],
+            )
+            for ch in channels
+        ]
+        rows.append(channel_buttons)
+    pagination = []
+    for p in range(1, min(total_pages + 1, 6)):
+        if p == current_page:
+            pagination.append(InlineKeyboardButton(text=f"•{p}•", callback_data=f"traffic_channel_page_{p}"))
+        else:
+            pagination.append(InlineKeyboardButton(text=str(p), callback_data=f"traffic_channel_page_{p}"))
+    if total_pages > 1 and current_page < total_pages:
+        pagination.append(InlineKeyboardButton(text="▶", callback_data=f"traffic_channel_page_{current_page + 1}"))
+    if pagination:
+        rows.append(pagination)
+    rows.append([
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="traffic_channels_refresh"),
+        InlineKeyboardButton(text="🏷️ По тегам", callback_data="traffic_by_sources"),
+    ])
+    rows.append([InlineKeyboardButton(text="◀️ К статистике", callback_data="admin_statistics")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)

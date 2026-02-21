@@ -63,22 +63,32 @@ def get_pending_applications_keyboard(applications: list) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_moderation_session_keyboard(session_id: int, is_completed: bool = False) -> InlineKeyboardMarkup:
-    """Клавиатура для сессии модерации"""
+def get_moderation_session_keyboard(
+    session_id: int,
+    is_completed: bool = False,
+    user_inactive_minutes: float | None = None,
+) -> InlineKeyboardMarkup:
+    """Клавиатура для сессии модерации.
+    Одна кнопка «Завершить заявку»: 🔴 если < 3 мин с последнего сообщения пользователя, 🟢 если >= 3 мин.
+    """
     keyboard = InlineKeyboardMarkup(inline_keyboard=[])
     
-    # Для активных сессий показываем кнопки подтверждения/отклонения
     if not is_completed:
-        keyboard.inline_keyboard.append([
-            InlineKeyboardButton(
-                text="✅ Подтвердить",
-                callback_data=f"moderator_approve_{session_id}"
-            ),
-            InlineKeyboardButton(
-                text="❌ Отклонить",
-                callback_data=f"moderator_reject_{session_id}"
-            )
-        ])
+        # Одна кнопка: красная (< 3 мин) или зелёная (>= 3 мин)
+        if user_inactive_minutes is not None and user_inactive_minutes >= 3:
+            keyboard.inline_keyboard.append([
+                InlineKeyboardButton(
+                    text="🟢 Завершить заявку",
+                    callback_data=f"moderator_end_request_{session_id}"
+                )
+            ])
+        else:
+            keyboard.inline_keyboard.append([
+                InlineKeyboardButton(
+                    text="🔴 Завершить заявку",
+                    callback_data=f"moderator_end_request_{session_id}"
+                )
+            ])
     
     keyboard.inline_keyboard.append([
         InlineKeyboardButton(

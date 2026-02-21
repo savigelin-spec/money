@@ -143,16 +143,19 @@ async def update_user_main_message(
             )
             return True
         except TelegramBadRequest as e:
+            err = str(e).lower()
+            # Контент и клавиатура не изменились — считаем успехом, не логируем как ошибку
+            if "message is not modified" in err:
+                return True
             # Сообщение удалено или недоступно - создаем новое
-            if "message to edit not found" in str(e).lower() or "message can't be edited" in str(e).lower():
+            if "message to edit not found" in err or "message can't be edited" in err:
                 logger.warning(f"Главное сообщение {user.main_message_id} недоступно, создаем новое")
                 user.main_message_id = None
                 await session.commit()
                 await get_or_create_user_main_message(bot, user_id, text, reply_markup)
                 return True
-            else:
-                logger.error(f"Ошибка при редактировании главного сообщения: {e}")
-                return False
+            logger.error(f"Ошибка при редактировании главного сообщения: {e}")
+            return False
 
 
 async def get_or_create_user_info_message(
@@ -175,10 +178,13 @@ async def get_or_create_user_info_message(
         # Если сообщение уже существует, пытаемся его отредактировать
         if moderation_session.user_info_message_id:
             try:
+                from keyboards.user_keyboards import get_user_end_session_keyboard
+                reply_markup = get_user_end_session_keyboard(moderation_session.id) if moderation_session.status == "active" else None
                 await bot.edit_message_text(
                     chat_id=user_id,
                     message_id=moderation_session.user_info_message_id,
                     text=text,
+                    reply_markup=reply_markup,
                 )
                 return moderation_session.user_info_message_id
             except TelegramBadRequest as e:
@@ -191,9 +197,12 @@ async def get_or_create_user_info_message(
 
         # Создаем новое сообщение
         try:
+            from keyboards.user_keyboards import get_user_end_session_keyboard
+            reply_markup = get_user_end_session_keyboard(moderation_session.id) if moderation_session.status == "active" else None
             sent_message = await bot.send_message(
                 chat_id=user_id,
                 text=text,
+                reply_markup=reply_markup,
             )
             message_id = sent_message.message_id
 
@@ -231,10 +240,13 @@ async def update_user_info_message(
             return True
 
         try:
+            from keyboards.user_keyboards import get_user_end_session_keyboard
+            reply_markup = get_user_end_session_keyboard(moderation_session.id) if moderation_session.status == "active" else None
             await bot.edit_message_text(
                 chat_id=user_id,
                 message_id=moderation_session.user_info_message_id,
                 text=text,
+                reply_markup=reply_markup,
             )
             return True
         except TelegramBadRequest as e:

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import TRANSACTION_DEPOSIT, STATUS_COMPLETED
 from database.models import User, Transaction, Application
-from database.queries import get_users_by_source
+from database.queries import get_users_by_source, get_total_users, get_paying_users, get_total_revenue
 
 
 async def get_conversion_funnel(
@@ -273,3 +273,25 @@ async def get_churn_rate(
     active = (await session.execute(active_q)).scalar() or 0
     churned = total - active
     return (churned / total * 100.0) if total > 0 else 0.0
+
+
+async def get_detailed_marketing_stats(
+    session: AsyncSession,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> dict[str, Any]:
+    """Агрегат для экрана «Подробная статистика»: пользователи, выручка, конверсия, LTV, ARPU, ARPPU."""
+    total_users = await get_total_users(session, start_date, end_date)
+    paying_users = await get_paying_users(session, start_date, end_date)
+    total_revenue = await get_total_revenue(session, start_date, end_date)
+    conversion_pct = (paying_users / total_users * 100.0) if total_users else 0.0
+    ltv_per_payer = (total_revenue / paying_users) if paying_users else 0.0
+    arpu = (total_revenue / total_users) if total_users else 0.0
+    return {
+        "total_users": total_users,
+        "paying_users": paying_users,
+        "total_revenue": total_revenue,
+        "conversion_pct": conversion_pct,
+        "ltv_per_payer": ltv_per_payer,
+        "arpu": arpu,
+    }

@@ -47,9 +47,11 @@ async def main():
     # ВАЖНО: Команда /start должна обрабатываться ПЕРВОЙ, независимо от состояния FSM
     dp.include_router(user_handlers.start_router)  # Команда /start обрабатывается первой
     dp.include_router(payment_handlers.router)  # Платежи должны обрабатываться первыми
-    dp.include_router(moderator_handlers.router)  # Модератор
+    dp.include_router(user_handlers.live_chat_router)  # Лайв-чат пользователя — до модератора, чтобы текст пользователя пересылался модератору
+    # Админ и админ-статистика до moderator_handlers: ввод user_id/роли в админских сценариях не должен перехватываться лайв-чатом модератора
     dp.include_router(admin_handlers.router)
     dp.include_router(admin_statistics_handlers.router)
+    dp.include_router(moderator_handlers.router)  # Модератор
     dp.include_router(user_handlers.router)  # Пользователь в конце
 
     logger.info("Бот запущен...")

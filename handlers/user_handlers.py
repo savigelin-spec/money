@@ -5,12 +5,12 @@ import asyncio
 import logging
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, PhotoSize
-from aiogram.filters import Command, or_f
+from aiogram.filters import Command, Filter, or_f
 from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
-from config import APPLICATION_COST, ROLE_MODERATOR, ROLE_ADMIN
+from config import APPLICATION_COST, ROLE_MODERATOR, ROLE_ADMIN, STATUS_CANCELLED
 from utils.security import is_moderator_or_admin
 from database.db import get_session
 from database.queries import (
@@ -20,10 +20,12 @@ from database.queries import (
     get_user_applications,
     get_application_by_id,
     get_active_moderation_session_by_user,
-    set_session_user_photo,
     set_user_main_message_id,
     get_all_moderators,
     get_moderation_session_by_id,
+    end_session_chat_only,
+    add_session_message,
+    update_last_user_activity,
     get_user_queue_count,
     get_user_completed_count,
 )
@@ -33,9 +35,10 @@ from keyboards.user_keyboards import (
     get_application_status_keyboard,
     get_applications_list_keyboard,
 )
-from handlers.states import UserStates, ModeratorStates
+from handlers.states import UserStates
 from utils.queue import update_queue_positions, format_wait_time
 from utils.balance import test_deposit
+from utils.traffic import parse_utm_params, save_traffic_source
 from utils.user_messages import (
     get_or_create_user_main_message,
     get_or_create_user_info_message,
@@ -51,16 +54,34 @@ router = Router()
 # Отдельный роутер для команды /start - должен обрабатываться ПЕРВЫМ
 start_router = Router()
 
+# Роутер лайв-чата пользователя — подключается ПЕРЕД moderator_handlers, чтобы текст от пользователя не перехватывался модераторским F.text
+live_chat_router = Router()
+
+
+class IsNotModeratorFilter(Filter):
+    """Фильтр: сообщение от пользователя, который НЕ модератор. Чтобы лайв-чат пользователя обрабатывался первым."""
+
+    async def __call__(self, message: Message) -> bool:
+        user_id = message.from_user.id if message.from_user else 0
+        async for db_session in get_session():
+            user = await get_or_create_user(db_session, user_id=user_id)
+            await db_session.commit()
+            return not is_moderator_or_admin(user)
+        return False
+
 
 # ВАЖНО: Обработчик команды /start должен быть зарегистрирован ПЕРВЫМ,
 # чтобы он обрабатывался независимо от состояния FSM
 @start_router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext):
-    """Обработчик команды /start"""
+async def cmd_start(message: Message, state: FSMContext, command: CommandObject = None):
+    """Обработчик команды /start. Payload из command.args для надёжного детекта ссылки ?start=ads_danya01."""
     await state.clear()
     main_menu_text = ""
     is_moderator_user = False
     is_admin_user = False
+
+    start_payload = (command.args and command.args.strip()) if command else None
+    text_for_utm = f"/start {start_payload}" if start_payload else (message.text or "")
 
     async for session in get_session():
         user = await get_or_create_user(
@@ -70,6 +91,9 @@ async def cmd_start(message: Message, state: FSMContext):
             first_name=message.from_user.first_name,
             last_name=message.from_user.last_name,
         )
+        utm_params = parse_utm_params(text_for_utm)
+        if utm_params and getattr(user, "traffic_source", None) is None:
+            await save_traffic_source(session, user, utm_params)
         is_moderator_user = is_moderator_or_admin(user)
         is_admin_user = user.role == ROLE_ADMIN
 
@@ -284,6 +308,19 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
         text=main_menu_text,
         reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user, is_admin=is_admin_user)
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "dismiss_notification")
+async def callback_dismiss_notification(callback: CallbackQuery, state: FSMContext):
+    """Удалить уведомление о завершении сессии по нажатию кнопки."""
+    try:
+        await callback.bot.delete_message(
+            chat_id=callback.message.chat.id,
+            message_id=callback.message.message_id,
+        )
+    except Exception as e:
+        logger.debug("Не удалось удалить уведомление (возможно уже удалено): %s", e)
     await callback.answer()
 
 
@@ -923,6 +960,85 @@ async def callback_confirm_moderator_photo(callback: CallbackQuery, state: FSMCo
         await callback.answer("✅ Подтверждение получено!")
 
 
+@router.callback_query(F.data.startswith("user_end_session_"))
+async def callback_user_end_session(callback: CallbackQuery, state: FSMContext):
+    """Пользователь завершает сессию (чат). Заявка остаётся на рассмотрении модератора."""
+    await state.clear()
+    session_id = int(callback.data.split("_")[-1])
+    moderator_id = None
+    user_menu_text = None
+    user_menu_keyboard = None
+    async for db_session in get_session():
+        moderation_session = await get_moderation_session_by_id(db_session, session_id)
+        if not moderation_session or moderation_session.user_id != callback.from_user.id:
+            await callback.answer("❌ Сессия не найдена", show_alert=True)
+            return
+        if moderation_session.status != "active":
+            await callback.answer("❌ Сессия уже завершена", show_alert=True)
+            return
+        try:
+            await end_session_chat_only(db_session, moderation_session)
+        except Exception as e:
+            logger.error(f"Ошибка при завершении сессии пользователем: {e}", exc_info=True)
+            await callback.answer("❌ Ошибка", show_alert=True)
+            return
+        application = await get_application_by_id(db_session, moderation_session.application_id)
+        if application:
+            application.status = STATUS_CANCELLED
+        try:
+            from utils.session_cleanup import delete_all_session_messages
+            await delete_all_session_messages(callback.bot, db_session, session_id)
+        except Exception as e:
+            logger.error(f"Ошибка при очистке сообщений сессии #{session_id}: {e}", exc_info=True)
+        await db_session.commit()
+        moderator_id = moderation_session.moderator_id
+        user = await get_or_create_user(db_session, user_id=callback.from_user.id)
+        await db_session.commit()
+        is_moderator_user = is_moderator_or_admin(user)
+        is_admin_user = user.role == ROLE_ADMIN
+        queue_count = await get_user_queue_count(db_session, callback.from_user.id)
+        now = datetime.utcnow()
+        start_today = datetime(now.year, now.month, now.day)
+        completed_today = await get_user_completed_count(
+            db_session, callback.from_user.id, start_today, now
+        )
+        completed_week = await get_user_completed_count(
+            db_session, callback.from_user.id, now - timedelta(days=7), now
+        )
+        completed_month = await get_user_completed_count(
+            db_session, callback.from_user.id, now - timedelta(days=30), now
+        )
+        completed_total = await get_user_completed_count(
+            db_session, callback.from_user.id, None, None
+        )
+        await db_session.commit()
+        user_menu_text = get_main_menu_text(
+            user.first_name, user.balance, queue_count,
+            completed_today, completed_week, completed_month, completed_total,
+        )
+        user_menu_keyboard = get_main_menu_keyboard(is_moderator=is_moderator_user, is_admin=is_admin_user)
+        break
+    if moderator_id is not None:
+        try:
+            from keyboards.moderator_keyboards import get_moderator_panel_keyboard
+            await update_user_main_message(
+                callback.bot,
+                moderator_id,
+                text="👮 Панель модератора\n\nℹ️ Пользователь завершил сессию (чат).",
+                reply_markup=get_moderator_panel_keyboard(),
+            )
+        except Exception as e:
+            logger.warning("Не удалось обновить сообщение модератора после завершения сессии пользователем: %s", e)
+    await callback.answer("Сессия завершена")
+    if user_menu_text is not None and user_menu_keyboard is not None:
+        await update_user_main_message(
+            callback.bot,
+            callback.from_user.id,
+            text=user_menu_text,
+            reply_markup=user_menu_keyboard,
+        )
+
+
 @router.callback_query(F.data.startswith("refresh_application_"))
 async def callback_refresh_application(callback: CallbackQuery, state: FSMContext):
     """Обновить статус заявки"""
@@ -953,149 +1069,72 @@ async def callback_refresh_application(callback: CallbackQuery, state: FSMContex
                 await callback.answer("❌ Ошибка обновления", show_alert=True)
 
 
-@router.message(F.photo)
-async def process_user_screenshot(message: Message, state: FSMContext):
-    """Обработка скриншота от пользователя (может быть отправлен в любой момент при активной сессии)"""
-    logger.info(
-        "[USER_PHOTO] Шаг 1/6: Бот получил фото. Обработчик: process_user_screenshot (handlers.user_handlers). "
-        f"user_id={message.from_user.id}, chat_id={message.chat.id}, message_id={message.message_id}"
-    )
-    # Проверяем, не является ли это фото от модератора (модератор в состоянии ожидания фото)
-    current_state = await state.get_state()
-    if current_state and str(current_state) == str(ModeratorStates.waiting_for_moderator_photo):
-        logger.debug(f"[USER_PHOTO] Пропуск: это фото от модератора {message.from_user.id}")
+@live_chat_router.message(F.text, IsNotModeratorFilter())
+async def process_user_live_chat_text(message: Message, state: FSMContext):
+    """Лайв-чат: пересылка текста от пользователя модератору при активной сессии. Роутер подключён до moderator_handlers."""
+    if not message.text or message.text.strip().startswith("/"):
         return
-
-    photo: PhotoSize = message.photo[-1]
-    file_id = photo.file_id
-    photo_message_id = message.message_id
-    logger.info(f"[USER_PHOTO] Шаг 2/6: Сохранён message_id сообщения со скриншотом для удаления: {photo_message_id}")
-
-    async for session in get_session():
-        session_obj = await get_active_moderation_session_by_user(
-            session,
-            message.from_user.id
-        )
-
+    async for db_session in get_session():
+        session_obj = await get_active_moderation_session_by_user(db_session, message.from_user.id)
         if not session_obj:
-            logger.info("[USER_PHOTO] Нет активной сессии модерации у пользователя — фото не обрабатываем")
+            logger.warning(
+                "Лайв-чат: у user_id=%s нет активной сессии, сообщение не переслано модератору",
+                message.from_user.id,
+            )
             return
-
-        logger.info(
-            f"[USER_PHOTO] Шаг 3/6: Найдена активная сессия. application_id={session_obj.application_id}, "
-            f"moderator_id={session_obj.moderator_id}. Сохраняем file_id, отправляем скриншот модератору."
-        )
-        await set_session_user_photo(session, session_obj, file_id)
-
-        bot = message.bot
-        from database.queries import set_moderator_screenshot_message_id
-
         try:
-            sent_message = await bot.send_photo(
+            sent = await message.bot.send_message(
                 chat_id=session_obj.moderator_id,
-                photo=file_id,
-                caption=f"📸 Скриншот от пользователя (Заявка #{session_obj.application_id})"
+                text=f"👤 Пользователь (заявка #{session_obj.application_id}):\n\n{message.text}",
             )
-            await set_moderator_screenshot_message_id(
-                session, session_obj.id, sent_message.message_id
-            )
+            await add_session_message(db_session, session_obj.id, session_obj.moderator_id, sent.message_id)
+            await add_session_message(db_session, session_obj.id, message.from_user.id, message.message_id)
+            await update_last_user_activity(db_session, session_obj)
+            await db_session.commit()
             logger.info(
-                f"[USER_PHOTO] Шаг 4/6: Скриншот отправлен модератору. Сохранён moderator_screenshot_message_id={sent_message.message_id}"
+                "Лайв-чат: текст от user_id=%s переслан модератору mod_id=%s, заявка #%s",
+                message.from_user.id, session_obj.moderator_id, session_obj.application_id,
             )
         except Exception as e:
-            logger.error(f"[USER_PHOTO] Ошибка отправки скриншота модератору: {e}")
-            await session.rollback()
-            return
-
-        await session.commit()
-
-        from utils.user_messages import delete_user_photo_message
-
-        logger.info(
-            f"[USER_PHOTO] Шаг 5/6: Вызов delete_user_photo_message(bot, chat_id={message.chat.id}, message_id={photo_message_id}). "
-            "Функция: utils.user_messages.delete_user_photo_message"
-        )
-        deleted = await delete_user_photo_message(
-            bot=bot,
-            chat_id=message.chat.id,
-            message_id=photo_message_id
-        )
-
-        logger.info(
-            f"[USER_PHOTO] Шаг 6/6: Результат удаления сообщения в чате пользователя: deleted={deleted}. "
-            f"message_id={photo_message_id}, chat_id={message.chat.id}"
-        )
-        if not deleted:
-            logger.warning(
-                "[USER_PHOTO] Сообщение пользователя не удалено (в личном чате бот не может удалять сообщения пользователя — ограничение Telegram)."
+            logger.error(
+                "Лайв-чат: ошибка пересылки текста модератору user_id=%s mod_id=%s: %s",
+                message.from_user.id, session_obj.moderator_id, e,
+                exc_info=True,
             )
-        
-        # Обновляем информационное сообщение
-        application = await get_application_by_id(session, session_obj.application_id)
-        await session.commit()
-        
-        if application:
-            wait_time_text = ""
-            if application.estimated_wait_time:
-                wait_time_text = f"\n⏱ Примерное время ожидания: {format_wait_time(application.estimated_wait_time)}"
-            
-            info_text = (
-                f"📊 Статус заявки #{application.id}\n\n"
-                f"Статус: {application.status}"
-            )
-            
-            if application.queue_position:
-                info_text += f"\n📍 Позиция в очереди: {application.queue_position}{wait_time_text}"
-            
-            info_text += "\n\n✅ Скриншот отправлен модератору. Ожидайте ответа."
-            
-            # Обновляем информационное сообщение
-            await update_user_info_message(
-                bot=bot,
-                user_id=message.from_user.id,
-                text=info_text
-            )
-        
-        await state.clear()
-
-
-@router.message(UserStates.waiting_for_screenshot)
-async def process_user_screenshot_invalid(message: Message, state: FSMContext):
-    """Обработка некорректного сообщения вместо скриншота"""
-    # Игнорируем команды - они обрабатываются отдельными обработчиками
-    # Проверяем, является ли сообщение командой через entities или начало текста
-    if message.entities:
-        from aiogram.enums import MessageEntityType
-        for entity in message.entities:
-            if entity.type == MessageEntityType.BOT_COMMAND:
-                # Это команда, очищаем состояние и пропускаем
-                await state.clear()
-                return
-    
-    if message.text and message.text.startswith('/'):
-        # Если это команда, очищаем состояние и пропускаем
-        await state.clear()
         return
-    
-    # Обновляем информационное сообщение, если есть активная сессия
-    async for session in get_session():
-        moderation_session = await get_active_moderation_session_by_user(
-            session,
-            message.from_user.id
-        )
-        await session.commit()
-        
-        if moderation_session:
-            await update_user_info_message(
-                bot=message.bot,
-                user_id=message.from_user.id,
-                text="❌ Пожалуйста, отправьте скриншот (фото)"
+
+
+@live_chat_router.message(F.photo, IsNotModeratorFilter())
+async def process_user_live_chat_photo(message: Message, state: FSMContext):
+    """Лайв-чат: пересылка фото от пользователя модератору при активной сессии."""
+    photo = message.photo[-1]
+    file_id = photo.file_id
+    async for db_session in get_session():
+        session_obj = await get_active_moderation_session_by_user(db_session, message.from_user.id)
+        if not session_obj:
+            logger.warning(
+                "Лайв-чат: у user_id=%s нет активной сессии, фото не переслано модератору",
+                message.from_user.id,
             )
-        else:
-            # Если нет активной сессии, обновляем главное сообщение
-            await update_user_main_message(
-                bot=message.bot,
-                user_id=message.from_user.id,
-                text="❌ Пожалуйста, отправьте скриншот (фото)",
-                reply_markup=get_back_to_menu_keyboard()
+            return
+        try:
+            sent = await message.bot.send_photo(
+                chat_id=session_obj.moderator_id,
+                photo=file_id,
+                caption=f"👤 Пользователь (заявка #{session_obj.application_id}): [фото]",
             )
+            await add_session_message(db_session, session_obj.id, session_obj.moderator_id, sent.message_id)
+            await add_session_message(db_session, session_obj.id, message.from_user.id, message.message_id)
+            await update_last_user_activity(db_session, session_obj)
+            await db_session.commit()
+            logger.info(
+                "Лайв-чат: фото от user_id=%s переслано модератору mod_id=%s, заявка #%s",
+                message.from_user.id, session_obj.moderator_id, session_obj.application_id,
+            )
+        except Exception as e:
+            logger.error(
+                "Лайв-чат: ошибка пересылки фото модератору user_id=%s mod_id=%s: %s",
+                message.from_user.id, session_obj.moderator_id, e,
+                exc_info=True,
+            )
+        return
