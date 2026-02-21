@@ -208,8 +208,6 @@ def format_financial_stats(stats: dict[str, Any]) -> str:
     text = (
         f"💰 Финансовая статистика ({period_label})\n\n"
         f"📥 Получено звёзд: {format_stars(stats.get('total_revenue', 0))}\n"
-        f"📤 Потрачено звёзд: {format_stars(stats.get('total_withdrawals', 0))}\n"
-        f"💵 Чистая прибыль: {format_stars(stats.get('net_revenue', 0))}\n"
         f"📊 Количество депозитов: {stats.get('total_deposits', 0)}"
     )
     return text
@@ -220,8 +218,6 @@ def format_financial_all_time_block(stats: dict[str, Any]) -> str:
     return (
         f"\n\n📌 Общие показатели (всё время)\n\n"
         f"📥 Получено звёзд: {format_stars(stats.get('total_revenue', 0))}\n"
-        f"📤 Потрачено звёзд: {format_stars(stats.get('total_withdrawals', 0))}\n"
-        f"💵 Чистая прибыль: {format_stars(stats.get('net_revenue', 0))}\n"
         f"📊 Количество депозитов: {stats.get('total_deposits', 0)}"
     )
 
