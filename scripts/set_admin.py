@@ -25,17 +25,14 @@ async def set_admin():
     admin_id = 6341142035
     
     async for session in get_session():
-        user, created = await get_or_create_user(session, user_id=admin_id)
+        user = await get_or_create_user(session, user_id=admin_id)
         old_role = user.role
         user.role = ROLE_ADMIN
         await session.commit()
         
-        if created:
-            print(f"[OK] Пользователь {admin_id} создан и назначен администратором")
-        else:
-            print(f"[OK] Пользователь {admin_id} назначен администратором")
-            print(f"     Предыдущая роль: {old_role}")
-            print(f"     Новая роль: {user.role}")
+        print(f"[OK] Пользователь {admin_id} назначен администратором")
+        print(f"     Предыдущая роль: {old_role}")
+        print(f"     Новая роль: {user.role}")
         
         print("\n[OK] Операция выполнена успешно!")
         print(f"Теперь пользователь {admin_id} может использовать команду /admin")
