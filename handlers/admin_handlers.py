@@ -300,6 +300,14 @@ async def admin_message_waiting_user_id(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     if not text or text.startswith("/"):
         return
+    # Удаляем сообщение админа (введённый user_id), чтобы не засорять чат — по аналогии с платежами и модератором
+    try:
+        await message.bot.delete_message(
+            chat_id=message.chat.id,
+            message_id=message.message_id,
+        )
+    except Exception:
+        pass
     is_valid_id, target_user_id, error_msg = validate_user_id(text)
     if not is_valid_id or target_user_id is None:
         await update_user_main_message(

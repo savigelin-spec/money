@@ -168,6 +168,17 @@ async def get_traffic_stats(
 
 # --- Форматирование (для UI) ---
 
+def period_display_name(period: str) -> str:
+    """Человекочитаемое название периода."""
+    names = {
+        StatisticsPeriod.TODAY: "День",
+        StatisticsPeriod.LAST_7_DAYS: "Неделя",
+        StatisticsPeriod.LAST_30_DAYS: "Месяц",
+        StatisticsPeriod.ALL_TIME: "Всё время",
+    }
+    return names.get(period, period)
+
+
 def format_stars(amount: int) -> str:
     """Форматировать звёзды."""
     return f"{amount:,}⭐"
@@ -191,10 +202,11 @@ def format_percentage(value: float) -> str:
 
 
 def format_financial_stats(stats: dict[str, Any]) -> str:
-    """Текст финансовой статистики."""
+    """Текст финансовой статистики за период."""
     period = stats.get("period", "период")
+    period_label = period_display_name(period)
     text = (
-        f"💰 Финансовая статистика ({period})\n\n"
+        f"💰 Финансовая статистика ({period_label})\n\n"
         f"📥 Получено звёзд: {format_stars(stats.get('total_revenue', 0))}\n"
         f"📤 Потрачено звёзд: {format_stars(stats.get('total_withdrawals', 0))}\n"
         f"💵 Чистая прибыль: {format_stars(stats.get('net_revenue', 0))}\n"
@@ -203,11 +215,23 @@ def format_financial_stats(stats: dict[str, Any]) -> str:
     return text
 
 
+def format_financial_all_time_block(stats: dict[str, Any]) -> str:
+    """Блок «Общие показатели (всё время)» для финансов."""
+    return (
+        f"\n\n📌 Общие показатели (всё время)\n\n"
+        f"📥 Получено звёзд: {format_stars(stats.get('total_revenue', 0))}\n"
+        f"📤 Потрачено звёзд: {format_stars(stats.get('total_withdrawals', 0))}\n"
+        f"💵 Чистая прибыль: {format_stars(stats.get('net_revenue', 0))}\n"
+        f"📊 Количество депозитов: {stats.get('total_deposits', 0)}"
+    )
+
+
 def format_applications_stats(stats: dict[str, Any]) -> str:
     """Текст статистики по заявкам."""
     by_status = stats.get("by_status", {})
+    period_label = period_display_name(stats.get("period", ""))
     text = (
-        f"📋 Статистика по заявкам ({stats.get('period', 'период')})\n\n"
+        f"📋 Статистика по заявкам ({period_label})\n\n"
         f"Всего заявок: {stats.get('total', 0)}\n"
         f"✅ Завершено: {by_status.get('completed', 0)} ({format_percentage(stats.get('success_rate', 0))})\n"
         f"❌ Отклонено: {by_status.get('rejected', 0)}\n"
@@ -221,8 +245,9 @@ def format_applications_stats(stats: dict[str, Any]) -> str:
 def format_users_stats(stats: dict[str, Any]) -> str:
     """Текст статистики по пользователям."""
     by_role = stats.get("by_role", {})
+    period_label = period_display_name(stats.get("period", ""))
     text = (
-        f"👥 Статистика по пользователям ({stats.get('period', 'период')})\n\n"
+        f"👥 Статистика по пользователям ({period_label})\n\n"
         f"Всего пользователей: {stats.get('total', 0)}\n"
         f"🟢 Активных: {stats.get('active', 0)}\n\n"
         f"📊 По ролям:\n"
@@ -238,9 +263,9 @@ def format_comprehensive_stats(stats: dict[str, Any]) -> str:
     financial = stats.get("financial", {})
     applications = stats.get("applications", {})
     users = stats.get("users", {})
-    period = stats.get("period", "период")
+    period_label = period_display_name(stats.get("period", ""))
     text = (
-        f"📊 Комплексная статистика ({period})\n\n"
+        f"📊 Комплексная статистика ({period_label})\n\n"
         f"💰 Финансы:\n"
         f"Доход: {format_stars(financial.get('total_revenue', 0))}\n"
         f"Чистая прибыль: {format_stars(financial.get('net_revenue', 0))}\n\n"
@@ -282,9 +307,9 @@ def format_traffic_stats(stats: dict[str, Any]) -> str:
     top_revenue = stats.get("top_by_revenue", [])
     top_users = stats.get("top_by_users", [])
     top_conversion = stats.get("top_by_conversion", [])
-    period = stats.get("period", "период")
+    period_label = period_display_name(stats.get("period", ""))
     text = (
-        f"🔗 Источники трафика ({period})\n\n"
+        f"🔗 Источники трафика ({period_label})\n\n"
         f"💰 Топ по доходу:\n"
     )
     for i, row in enumerate(top_revenue[:5], 1):

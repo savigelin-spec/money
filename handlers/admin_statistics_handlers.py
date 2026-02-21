@@ -15,6 +15,7 @@ from utils.statistics import (
     get_traffic_stats,
     StatisticsPeriod,
     format_financial_stats,
+    format_financial_all_time_block,
     format_applications_stats,
     format_users_stats,
     format_comprehensive_stats,
@@ -77,8 +78,7 @@ async def callback_admin_statistics(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("stats_period_"))
 async def callback_stats_period(callback: CallbackQuery, state: FSMContext):
-    """Показать сводную статистику за выбранный период."""
-    await state.clear()
+    """Показать статистику за выбранный период (финансы с общими показателями или сводная)."""
     answered = False
     try:
         if not await check_admin_access(callback):
@@ -86,6 +86,31 @@ async def callback_stats_period(callback: CallbackQuery, state: FSMContext):
             return
         period_key = callback.data.replace("stats_period_", "")
         period = _PERIOD_MAP.get(period_key, StatisticsPeriod.LAST_30_DAYS)
+        data = await state.get_data()
+        current_stats_type = data.get("current_stats_type")
+
+        if current_stats_type == "financial":
+            # Экран «Финансы»: период + общие показатели (всё время), без дублирования при period=all_time
+            text = "Нет данных."
+            async for session in get_session():
+                period_stats = await get_financial_stats(session, period)
+                text = format_financial_stats(period_stats)
+                if period != StatisticsPeriod.ALL_TIME:
+                    all_time_stats = await get_financial_stats(session, StatisticsPeriod.ALL_TIME)
+                    text += format_financial_all_time_block(all_time_stats)
+                await session.commit()
+                break
+            await update_user_main_message(
+                bot=callback.bot,
+                user_id=callback.from_user.id,
+                text=text,
+                reply_markup=get_statistics_period_keyboard(),
+            )
+            await callback.answer()
+            answered = True
+            return
+        # Сводная статистика (как раньше)
+        await state.clear()
         text = "Нет данных."
         async for session in get_session():
             stats = await get_comprehensive_stats(session, period)
@@ -113,8 +138,7 @@ async def callback_stats_period(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("stats_type_"))
 async def callback_stats_type(callback: CallbackQuery, state: FSMContext):
-    """Показать выбранный тип статистики (период по умолчанию 30 дней)."""
-    await state.clear()
+    """Показать выбранный тип статистики. Для «Финансы» — период по умолчанию месяц + общие показатели + выбор периода."""
     answered = False
     try:
         if not await check_admin_access(callback):
@@ -123,11 +147,27 @@ async def callback_stats_type(callback: CallbackQuery, state: FSMContext):
         stats_type = callback.data.replace("stats_type_", "")
         period = StatisticsPeriod.LAST_30_DAYS
         text = "Нет данных."
+
+        if stats_type == "financial":
+            await state.update_data(current_stats_type="financial")
+            async for session in get_session():
+                period_stats = await get_financial_stats(session, period)
+                all_time_stats = await get_financial_stats(session, StatisticsPeriod.ALL_TIME)
+                await session.commit()
+                text = format_financial_stats(period_stats) + format_financial_all_time_block(all_time_stats)
+                break
+            await update_user_main_message(
+                bot=callback.bot,
+                user_id=callback.from_user.id,
+                text=text,
+                reply_markup=get_statistics_period_keyboard(),
+            )
+            await callback.answer()
+            answered = True
+            return
+        await state.clear()
         async for session in get_session():
-            if stats_type == "financial":
-                data = await get_financial_stats(session, period)
-                text = format_financial_stats(data)
-            elif stats_type == "applications":
+            if stats_type == "applications":
                 data = await get_applications_stats(session, period)
                 text = format_applications_stats(data)
             elif stats_type == "users":

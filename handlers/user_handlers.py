@@ -358,31 +358,6 @@ async def callback_confirm_create_application(callback: CallbackQuery, state: FS
         await callback.answer("Заявка создана!")
 
 
-@router.callback_query(F.data == "show_balance")
-async def callback_show_balance(callback: CallbackQuery, state: FSMContext):
-    """Показать баланс пользователя"""
-    await state.clear()
-    async for session in get_session():
-        user = await get_or_create_user(
-            session,
-            user_id=callback.from_user.id,
-        )
-        await session.commit()
-        
-        balance_text = (
-            f"💰 Ваш баланс: {user.balance}⭐\n\n"
-            f"Стоимость заявки: {APPLICATION_COST}⭐"
-        )
-        
-        await update_user_main_message(
-            bot=callback.bot,
-            user_id=callback.from_user.id,
-            text=balance_text,
-            reply_markup=get_back_to_menu_keyboard()
-        )
-        await callback.answer()
-
-
 @router.callback_query(F.data == "deposit_balance")
 async def callback_deposit_balance(callback: CallbackQuery, state: FSMContext):
     """Начать процесс пополнения баланса через Telegram Stars"""
@@ -699,6 +674,60 @@ async def callback_my_applications(callback: CallbackQuery, state: FSMContext):
                 reply_markup=get_applications_list_keyboard(applications)
             )
         await callback.answer()
+
+
+@router.callback_query(F.data == "faq")
+async def callback_faq(callback: CallbackQuery, state: FSMContext):
+    """Заглушка: F.A.Q"""
+    await state.clear()
+    async for session in get_session():
+        user = await get_or_create_user(session, user_id=callback.from_user.id)
+        await session.commit()
+        is_moderator_user = is_moderator_or_admin(user)
+        is_admin_user = user.role == ROLE_ADMIN
+        await update_user_main_message(
+            bot=callback.bot,
+            user_id=callback.from_user.id,
+            text="Раздел F.A.Q в разработке.",
+            reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user, is_admin=is_admin_user),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "support")
+async def callback_support(callback: CallbackQuery, state: FSMContext):
+    """Заглушка: Поддержка"""
+    await state.clear()
+    async for session in get_session():
+        user = await get_or_create_user(session, user_id=callback.from_user.id)
+        await session.commit()
+        is_moderator_user = is_moderator_or_admin(user)
+        is_admin_user = user.role == ROLE_ADMIN
+        await update_user_main_message(
+            bot=callback.bot,
+            user_id=callback.from_user.id,
+            text="Раздел поддержки в разработке.",
+            reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user, is_admin=is_admin_user),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "referral")
+async def callback_referral(callback: CallbackQuery, state: FSMContext):
+    """Заглушка: Реферальная программа"""
+    await state.clear()
+    async for session in get_session():
+        user = await get_or_create_user(session, user_id=callback.from_user.id)
+        await session.commit()
+        is_moderator_user = is_moderator_or_admin(user)
+        is_admin_user = user.role == ROLE_ADMIN
+        await update_user_main_message(
+            bot=callback.bot,
+            user_id=callback.from_user.id,
+            text="Реферальная программа в разработке.",
+            reply_markup=get_main_menu_keyboard(is_moderator=is_moderator_user, is_admin=is_admin_user),
+        )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("view_application_"))

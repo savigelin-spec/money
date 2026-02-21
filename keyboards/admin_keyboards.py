@@ -58,15 +58,15 @@ def get_statistics_main_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_statistics_period_keyboard() -> InlineKeyboardMarkup:
-    """Выбор периода статистики."""
+    """Выбор периода статистики (День / Неделя / Месяц / Общие)."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="Сегодня", callback_data="stats_period_today"),
-            InlineKeyboardButton(text="7 дней", callback_data="stats_period_7_days"),
+            InlineKeyboardButton(text="День", callback_data="stats_period_today"),
+            InlineKeyboardButton(text="Неделя", callback_data="stats_period_7_days"),
         ],
         [
-            InlineKeyboardButton(text="30 дней", callback_data="stats_period_30_days"),
-            InlineKeyboardButton(text="Всё время", callback_data="stats_period_all_time"),
+            InlineKeyboardButton(text="Месяц", callback_data="stats_period_30_days"),
+            InlineKeyboardButton(text="Общие", callback_data="stats_period_all_time"),
         ],
         [InlineKeyboardButton(text="◀️ К статистике", callback_data="admin_statistics")],
     ])
